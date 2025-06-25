@@ -1697,18 +1697,18 @@ const AdminDashboard: React.FC<{
     }
   }
 
-  const testHealthCheck = async () => {
-    try {
-      const response = await apiCall("/health", null, "GET", false)
-      if (response.status === "SUCCESS") {
-        addNotification("Health check passed - System is healthy", "success")
-      } else {
-        addNotification("Health check failed", "error")
-      }
-    } catch (error: any) {
-      addNotification(`Health check error: ${error.message}`, "error")
-    }
-  }
+  // const testHealthCheck = async () => {
+  //   try {
+  //     const response = await apiCall("/health", null, "GET", false)
+  //     if (response.status === "SUCCESS") {
+  //       addNotification("Health check passed - System is healthy", "success")
+  //     } else {
+  //       addNotification("Health check failed", "error")
+  //     }
+  //   } catch (error: any) {
+  //     addNotification(`Health check error: ${error.message}`, "error")
+  //   }
+  // }
 
   return (
     <div className="space-y-6">
