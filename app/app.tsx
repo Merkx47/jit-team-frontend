@@ -119,7 +119,7 @@ const API_CONFIG: ApiConfig = {
   // For local development, uncomment this:
   // BASE_URL: 'http://localhost:8000',
 
-  TIMEOUT: 30000, // 30 seconds
+  TIMEOUT: 300000, // 30 seconds
   HEADERS: {
     "Content-Type": "application/json",
     Accept: "application/json",
