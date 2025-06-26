@@ -119,7 +119,7 @@ const API_CONFIG: ApiConfig = {
   // For local development, uncomment this:
   // BASE_URL: 'http://localhost:8000',
 
-  TIMEOUT: 300000, // 30 seconds
+  TIMEOUT: 300000, // 5 minutes
   HEADERS: {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -391,7 +391,7 @@ const LoginForm: React.FC<{
             <Shield className="w-12 h-12 text-blue-600" />
           </div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            TEAM System
+            QTEAM System
           </h1>
           <p className="text-gray-600 mt-2">Temporary Elevated Access Management</p>
         </div>
@@ -479,7 +479,7 @@ const TokenSignupForm: React.FC<{
           <h1 className="text-3xl font-bold bg-gradient-to-r from-green-600 to-blue-600 bg-clip-text text-transparent">
             Complete Your Registration
           </h1>
-          <p className="text-gray-600 mt-2">You've been invited to join the TEAM System</p>
+          <p className="text-gray-600 mt-2">You've been invited to join the QTEAM System</p>
         </div>
 
         <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
@@ -595,9 +595,9 @@ const Header: React.FC<{
           </div>
           <div>
             <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              TEAM
+              QTEAM
             </h1>
-            <p className="text-sm text-gray-500 font-medium">Temporary Elevated Access Management</p>
+            <p className="text-sm text-gray-500 font-medium">Qucoon Temporary Elevated Access Management</p>
           </div>
         </div>
         <div className="flex items-center space-x-6">
@@ -777,7 +777,7 @@ const UserInvitations: React.FC<{
             <Mail className="w-6 h-6 mr-3 text-blue-600" />
             Send User Invitation
           </h3>
-          <p className="text-gray-600 mt-1">Create signup tokens and invite new users to the TEAM system</p>
+          <p className="text-gray-600 mt-1">Create signup tokens and invite new users to the QTEAM system</p>
         </div>
 
         <div className="p-6 space-y-6">
@@ -887,7 +887,7 @@ const UserInvitations: React.FC<{
               <CheckCircle className="w-3 h-3 text-green-600" />
             </div>
             <div>
-              <strong>Account Active:</strong> The user can immediately log in and start using the TEAM system.
+              <strong>Account Active:</strong> The user can immediately log in and start using the QTEAM system.
             </div>
           </div>
         </div>
@@ -1632,9 +1632,9 @@ const Dashboard: React.FC<{ statusData: StatusData; authState: AuthState; connec
     </div>
 
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Welcome to TEAM System</h3>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">Welcome to QTEAM System</h3>
       <p className="text-gray-600 mb-4">
-        The Temporary Elevated Access Management (TEAM) system allows you to request and manage temporary elevated
+        The Temporary Elevated Access Management (QTEAM) system allows you to request and manage temporary elevated
         permissions for AWS resources.
       </p>
 
@@ -1910,7 +1910,7 @@ const TEAMSystem: React.FC = () => {
       checkConnection()
 
       // Set up periodic connection check
-      const connectionInterval = setInterval(checkConnection, 30000) // Check every 30 seconds
+      const connectionInterval = setInterval(checkConnection, 300000) // Check every 5 minutes
 
       return () => clearInterval(connectionInterval)
     }
@@ -2033,7 +2033,7 @@ const TEAMSystem: React.FC = () => {
           user: user,
           token: token,
         })
-        addNotification("Account created successfully! Welcome to TEAM System.", "success")
+        addNotification("Account created successfully! Welcome to QTEAM System.", "success")
         // Clear URL parameters
         window.history.replaceState({}, document.title, window.location.pathname)
       } else {
