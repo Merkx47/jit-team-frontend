@@ -25,6 +25,9 @@ import {
   Calendar,
   FileText,
   UserCheck,
+  AlertCircle,
+  X,
+  RotateCcw,
   Zap,
   Timer,
   LogOut,
@@ -1574,6 +1577,7 @@ const MyRequests: React.FC<{
 }
 
 // Approvals Component
+// Enhanced Approvals Component - Updated for Your Backend
 const Approvals: React.FC<{
   pendingRequests: any[]
   loading: boolean
@@ -1588,6 +1592,116 @@ const Approvals: React.FC<{
     action: null,
   })
   const [comment, setComment] = useState("")
+  
+  // New state for search and filtering
+  const [searchTerm, setSearchTerm] = useState("")
+  const [filterStatus, setFilterStatus] = useState("PENDING") // Default to pending
+  const [allRequests, setAllRequests] = useState<any[]>([])
+  const [showAllRequests, setShowAllRequests] = useState(false)
+  const [loadingAll, setLoadingAll] = useState(false)
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
+
+  // Load all requests when component mounts or when toggled
+  useEffect(() => {
+    if (showAllRequests) {
+      loadAllRequests()
+    }
+  }, [showAllRequests])
+
+  const loadAllRequests = async () => {
+    try {
+      setLoadingAll(true)
+      
+      // Use your existing /check-status endpoint with show_all=true
+      const allResponse = await apiCall("/check-status", { show_all: true })
+
+      if (allResponse.status === "SUCCESS" && allResponse.data?.all_requests) {
+        // Your backend returns all_requests array
+        setAllRequests(allResponse.data.all_requests)
+        console.log(`✅ Loaded ${allResponse.data.all_requests.length} total requests`)
+      } else {
+        // Fallback: manually combine different status calls if show_all doesn't work
+        console.log("📋 Using fallback method to load all requests")
+        const [pendingResponse, activeResponse] = await Promise.all([
+          apiCall("/check-status", { show_pending: true }),
+          apiCall("/check-status", { show_active: true })
+        ])
+        
+        const combined = [
+          ...(pendingResponse.data?.pending_requests || []),
+          ...(activeResponse.data?.active_resources || [])
+        ]
+        setAllRequests(combined)
+        console.log(`✅ Loaded ${combined.length} requests via fallback`)
+      }
+    } catch (error: any) {
+      console.error("Error loading all requests:", error)
+      addNotification(`Error loading requests: ${error.message}`, "error")
+    } finally {
+      setLoadingAll(false)
+    }
+  }
+
+  // Determine which requests to show based on toggle
+  const requestsToFilter = showAllRequests ? allRequests : pendingRequests
+
+  // Filter requests based on search and status
+  const filteredRequests = requestsToFilter.filter((request) => {
+    const matchesSearch = 
+      request.justification?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      request.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      request.permissions?.some((p: string) => p.toLowerCase().includes(searchTerm.toLowerCase()))
+    
+    const matchesStatus = filterStatus === "ALL" || request.status === filterStatus
+    
+    return matchesSearch && matchesStatus
+  })
+
+  // Pagination calculations
+  const totalItems = filteredRequests.length
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedRequests = filteredRequests.slice(startIndex, endIndex)
+  
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, filterStatus, showAllRequests])
+
+  // Generate page numbers for pagination
+  const getPageNumbers = () => {
+    const pages = []
+    const maxVisiblePages = 5
+    
+    if (totalPages <= maxVisiblePages) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i)
+      }
+    } else {
+      const startPage = Math.max(1, currentPage - 2)
+      const endPage = Math.min(totalPages, startPage + maxVisiblePages - 1)
+      
+      if (startPage > 1) {
+        pages.push(1)
+        if (startPage > 2) pages.push('...')
+      }
+      
+      for (let i = startPage; i <= endPage; i++) {
+        pages.push(i)
+      }
+      
+      if (endPage < totalPages) {
+        if (endPage < totalPages - 1) pages.push('...')
+        pages.push(totalPages)
+      }
+    }
+    
+    return pages
+  }
 
   const handleApproval = async (requestId: string, action: string, comments = "") => {
     try {
@@ -1602,6 +1716,9 @@ const Approvals: React.FC<{
       if (response.status === "SUCCESS") {
         addNotification(`Request ${action.toLowerCase()}d successfully`, "success")
         await loadPendingRequests()
+        if (showAllRequests) {
+          await loadAllRequests()
+        }
       } else {
         addNotification(response.message || "Failed to process request", "error")
       }
@@ -1622,122 +1739,363 @@ const Approvals: React.FC<{
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xl font-semibold text-gray-900 flex items-center">
-          <Clock className="w-6 h-6 mr-3 text-blue-600" />
-          Pending Approvals
-        </h3>
-        <button
-          onClick={loadPendingRequests}
-          disabled={loading}
-          className="text-blue-600 hover:text-blue-800 flex items-center text-sm font-medium px-3 py-2 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+      {/* Header with toggle and controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center space-x-4">
+          <h3 className="text-xl font-semibold text-gray-900 flex items-center">
+            <Clock className="w-6 h-6 mr-3 text-blue-600" />
+            {showAllRequests ? "All Requests" : "Pending Approvals"}
+          </h3>
+          
+          {/* Toggle switch */}
+          <div className="flex items-center space-x-3">
+            <span className={`text-sm ${!showAllRequests ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+              Pending Only
+            </span>
+            <button
+              onClick={() => setShowAllRequests(!showAllRequests)}
+              disabled={loadingAll}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
+                showAllRequests ? 'bg-blue-600' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  showAllRequests ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+            <span className={`text-sm ${showAllRequests ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+              All Requests
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-3">
+          {/* Search input */}
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search requests..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          {/* Status filter */}
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          >
+            {showAllRequests ? (
+              <>
+                <option value="ALL">All Status</option>
+                <option value="PENDING">Pending</option>
+                <option value="ACTIVE">Active</option>
+                <option value="APPROVED">Approved</option>
+                <option value="DENIED">Denied</option>
+                <option value="REVOKED">Revoked</option>
+                <option value="EXPIRED">Expired</option>
+              </>
+            ) : (
+              <option value="PENDING">Pending Only</option>
+            )}
+          </select>
+
+          {/* Items per page selector */}
+          <select
+            value={itemsPerPage}
+            onChange={(e) => {
+              setItemsPerPage(Number(e.target.value))
+              setCurrentPage(1)
+            }}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          >
+            <option value={5}>5 per page</option>
+            <option value={10}>10 per page</option>
+            <option value={25}>25 per page</option>
+            <option value={50}>50 per page</option>
+            <option value={100}>100 per page</option>
+          </select>
+
+          {/* Refresh button */}
+          <button
+            onClick={() => {
+              loadPendingRequests()
+              if (showAllRequests) {
+                loadAllRequests()
+              }
+            }}
+            disabled={loading || loadingAll}
+            className="text-blue-600 hover:text-blue-800 flex items-center text-sm font-medium px-3 py-2 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 mr-1 ${(loading || loadingAll) ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {pendingRequests.length === 0 ? (
+      {/* Loading indicator */}
+      {loadingAll && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center text-blue-800">
+            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+            <span className="text-sm">Loading all requests...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Results summary with pagination info */}
+      {showAllRequests && !loadingAll && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-blue-800">
+              Showing {startIndex + 1}-{Math.min(endIndex, totalItems)} of {totalItems} requests
+              {requestsToFilter.length !== totalItems && (
+                <span className="text-blue-600"> (filtered from {requestsToFilter.length} total)</span>
+              )}
+            </span>
+            <span className="text-blue-600">
+              {requestsToFilter.filter(r => r.status === 'PENDING').length} pending approval
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Pagination info for pending only view */}
+      {!showAllRequests && totalItems > itemsPerPage && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-800">
+              Showing {startIndex + 1}-{Math.min(endIndex, totalItems)} of {totalItems} pending requests
+            </span>
+            <span className="text-gray-600">
+              Page {currentPage} of {totalPages}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Requests list */}
+      {totalItems === 0 && !loadingAll ? (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <Clock className="w-8 h-8 text-gray-400" />
           </div>
-          <div className="text-gray-500 text-lg mb-2">No pending requests</div>
-          <div className="text-gray-400 text-sm">All requests have been processed</div>
+          <div className="text-gray-500 text-lg mb-2">
+            {searchTerm || filterStatus !== "PENDING" ? "No requests found" : "No pending requests"}
+          </div>
+          <div className="text-gray-400 text-sm">
+            {searchTerm || filterStatus !== "PENDING" 
+              ? "Try adjusting your search or filters" 
+              : "All requests have been processed"}
+          </div>
         </div>
       ) : (
-        <div className="space-y-4">
-          {pendingRequests.map((request) => (
-            <div
-              key={request.request_id}
-              className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
-            >
-              <div className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(request.status)}`}
-                    >
-                      {request.status}
-                    </span>
-                    {request.urgency && (
+        <>
+          <div className="space-y-4">
+            {paginatedRequests.map((request) => (
+              <div
+                key={request.request_id}
+                className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
+              >
+                <div className="p-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center space-x-3">
                       <span
-                        className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(request.urgency)}`}
+                        className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(request.status)}`}
                       >
-                        {request.urgency.toUpperCase()}
+                        {request.status}
                       </span>
-                    )}
-                    <span className="text-xs text-gray-500">
-                      Requested by: <strong>{request.email}</strong>
-                    </span>
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {request.pending_for_hours && `Pending for ${request.pending_for_hours}h`}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
-                    <div className="flex flex-wrap gap-2">
-                      {request.permissions?.map((perm: string) => {
-                        const permData = PERMISSIONS.find((p) => p.id === perm)
-                        return (
-                          <span
-                            key={perm}
-                            className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
-                          >
-                            {permData?.icon} {permData?.label || perm}
-                          </span>
-                        )
-                      })}
+                      {request.urgency && (
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(request.urgency)}`}
+                        >
+                          {request.urgency.toUpperCase()}
+                        </span>
+                      )}
+                      <span className="text-xs text-gray-500">
+                        Requested by: <strong>{request.email}</strong>
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 text-right">
+                      <div>{new Date(request.requested_at).toLocaleDateString()}</div>
+                      {request.pending_for_hours && (
+                        <div className="text-orange-600">Pending {request.pending_for_hours}h</div>
+                      )}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-sm font-medium text-gray-900 mb-2">Duration</div>
-                    <div className="text-sm text-gray-600">
-                      {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
+                      <div className="flex flex-wrap gap-2">
+                        {request.permissions?.map((perm: string) => {
+                          const permData = PERMISSIONS.find((p) => p.id === perm)
+                          return (
+                            <span
+                              key={perm}
+                              className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
+                            >
+                              {permData?.icon} {permData?.label || perm}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-gray-900 mb-2">Duration & Details</div>
+                      <div className="text-sm text-gray-600 space-y-1">
+                        <div className="flex items-center">
+                          <Timer className="w-4 h-4 mr-2" />
+                          {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
+                        </div>
+                        {request.approved_by && (
+                          <div className="flex items-center text-green-600">
+                            <UserCheck className="w-4 h-4 mr-2" />
+                            Approved by {request.approved_by}
+                          </div>
+                        )}
+                        {request.status === "ACTIVE" && request.time_remaining_seconds && (
+                          <div className="flex items-center text-green-600">
+                            <Clock className="w-4 h-4 mr-2" />
+                            {formatTimeRemaining(request.time_remaining_seconds)} remaining
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
+
+                  {request.justification && (
+                    <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                      <div className="text-sm font-medium text-gray-900 mb-1">Business Justification</div>
+                      <div className="text-sm text-gray-700">{request.justification}</div>
+                    </div>
+                  )}
+
+                  {request.comments && (
+                    <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                      <div className="text-sm text-yellow-800">
+                        <strong>Admin Comments:</strong> {request.comments}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action buttons - only show for pending requests */}
+                  {request.status === "PENDING" && (
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+                      <button
+                        onClick={() => openCommentModal(request.request_id, "DENIED")}
+                        disabled={processingId === request.request_id}
+                        className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50"
+                      >
+                        Deny
+                      </button>
+                      <button
+                        onClick={() => handleApproval(request.request_id, "APPROVED")}
+                        disabled={processingId === request.request_id}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2"
+                      >
+                        {processingId === request.request_id ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Processing...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            <span>Approve</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+              <div className="flex items-center justify-between">
+                {/* Page info */}
+                <div className="text-sm text-gray-700">
+                  Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+                  <span className="font-medium">{Math.min(endIndex, totalItems)}</span> of{' '}
+                  <span className="font-medium">{totalItems}</span> results
                 </div>
 
-                {request.justification && (
-                  <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                    <div className="text-sm font-medium text-gray-900 mb-1">Business Justification</div>
-                    <div className="text-sm text-gray-700">{request.justification}</div>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+                {/* Pagination buttons */}
+                <div className="flex items-center space-x-2">
+                  {/* Previous button */}
                   <button
-                    onClick={() => openCommentModal(request.request_id, "DENIED")}
-                    disabled={processingId === request.request_id}
-                    className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50"
+                    onClick={() => setCurrentPage(currentPage - 1)}
+                    disabled={currentPage === 1}
+                    className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Deny
+                    Previous
                   </button>
+
+                  {/* Page numbers */}
+                  <div className="flex items-center space-x-1">
+                    {getPageNumbers().map((page, index) => (
+                      <button
+                        key={index}
+                        onClick={() => typeof page === 'number' && setCurrentPage(page)}
+                        disabled={page === '...'}
+                        className={`px-3 py-2 text-sm font-medium rounded-md ${
+                          page === currentPage
+                            ? 'text-blue-600 bg-blue-50 border border-blue-300'
+                            : page === '...'
+                            ? 'text-gray-400 cursor-default'
+                            : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Next button */}
                   <button
-                    onClick={() => handleApproval(request.request_id, "APPROVED")}
-                    disabled={processingId === request.request_id}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2"
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {processingId === request.request_id ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Processing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle className="w-4 h-4" />
-                        <span>Approve</span>
-                      </>
-                    )}
+                    Next
                   </button>
                 </div>
               </div>
+
+              {/* Jump to page */}
+              {totalPages > 10 && (
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="flex items-center justify-center space-x-2">
+                    <span className="text-sm text-gray-600">Jump to page:</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max={totalPages}
+                      value={currentPage}
+                      onChange={(e) => {
+                        const page = parseInt(e.target.value)
+                        if (page >= 1 && page <= totalPages) {
+                          setCurrentPage(page)
+                        }
+                      }}
+                      className="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <span className="text-sm text-gray-600">of {totalPages}</span>
+                  </div>
+                </div>
+              )}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {/* Comment Modal */}
@@ -1790,6 +2148,226 @@ const Approvals: React.FC<{
     </div>
   )
 }
+
+
+
+// // Approvals Component
+// const Approvals: React.FC<{
+//   pendingRequests: any[]
+//   loading: boolean
+//   loadPendingRequests: () => void
+//   authState: AuthState
+//   addNotification: (message: string, type: "success" | "error") => void
+// }> = ({ pendingRequests, loading, loadPendingRequests, authState, addNotification }) => {
+//   const [processingId, setProcessingId] = useState<string | null>(null)
+//   const [commentModal, setCommentModal] = useState<{ show: boolean; requestId: string | null; action: string | null }>({
+//     show: false,
+//     requestId: null,
+//     action: null,
+//   })
+//   const [comment, setComment] = useState("")
+
+//   const handleApproval = async (requestId: string, action: string, comments = "") => {
+//     try {
+//       setProcessingId(requestId)
+//       const response = await apiCall("/approve", {
+//         request_id: requestId,
+//         action: action,
+//         approver_email: authState.user?.email,
+//         comments: comments,
+//       })
+
+//       if (response.status === "SUCCESS") {
+//         addNotification(`Request ${action.toLowerCase()}d successfully`, "success")
+//         await loadPendingRequests()
+//       } else {
+//         addNotification(response.message || "Failed to process request", "error")
+//       }
+//     } catch (error: any) {
+//       console.error("Error processing approval:", error)
+//       addNotification(`Error: ${error.message}`, "error")
+//     } finally {
+//       setProcessingId(null)
+//       setCommentModal({ show: false, requestId: null, action: null })
+//       setComment("")
+//     }
+//   }
+
+//   const openCommentModal = (requestId: string, action: string) => {
+//     setCommentModal({ show: true, requestId, action })
+//     setComment("")
+//   }
+
+//   return (
+//     <div className="space-y-6">
+//       <div className="flex items-center justify-between">
+//         <h3 className="text-xl font-semibold text-gray-900 flex items-center">
+//           <Clock className="w-6 h-6 mr-3 text-blue-600" />
+//           Pending Approvals
+//         </h3>
+//         <button
+//           onClick={loadPendingRequests}
+//           disabled={loading}
+//           className="text-blue-600 hover:text-blue-800 flex items-center text-sm font-medium px-3 py-2 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
+//         >
+//           <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+//           Refresh
+//         </button>
+//       </div>
+
+//       {pendingRequests.length === 0 ? (
+//         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+//           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+//             <Clock className="w-8 h-8 text-gray-400" />
+//           </div>
+//           <div className="text-gray-500 text-lg mb-2">No pending requests</div>
+//           <div className="text-gray-400 text-sm">All requests have been processed</div>
+//         </div>
+//       ) : (
+//         <div className="space-y-4">
+//           {pendingRequests.map((request) => (
+//             <div
+//               key={request.request_id}
+//               className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
+//             >
+//               <div className="p-6">
+//                 <div className="flex items-start justify-between mb-4">
+//                   <div className="flex items-center space-x-3">
+//                     <span
+//                       className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(request.status)}`}
+//                     >
+//                       {request.status}
+//                     </span>
+//                     {request.urgency && (
+//                       <span
+//                         className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(request.urgency)}`}
+//                       >
+//                         {request.urgency.toUpperCase()}
+//                       </span>
+//                     )}
+//                     <span className="text-xs text-gray-500">
+//                       Requested by: <strong>{request.email}</strong>
+//                     </span>
+//                   </div>
+//                   <div className="text-xs text-gray-500">
+//                     {request.pending_for_hours && `Pending for ${request.pending_for_hours}h`}
+//                   </div>
+//                 </div>
+
+//                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+//                   <div>
+//                     <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
+//                     <div className="flex flex-wrap gap-2">
+//                       {request.permissions?.map((perm: string) => {
+//                         const permData = PERMISSIONS.find((p) => p.id === perm)
+//                         return (
+//                           <span
+//                             key={perm}
+//                             className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
+//                           >
+//                             {permData?.icon} {permData?.label || perm}
+//                           </span>
+//                         )
+//                       })}
+//                     </div>
+//                   </div>
+//                   <div>
+//                     <div className="text-sm font-medium text-gray-900 mb-2">Duration</div>
+//                     <div className="text-sm text-gray-600">
+//                       {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
+//                     </div>
+//                   </div>
+//                 </div>
+
+//                 {request.justification && (
+//                   <div className="bg-gray-50 rounded-lg p-4 mb-4">
+//                     <div className="text-sm font-medium text-gray-900 mb-1">Business Justification</div>
+//                     <div className="text-sm text-gray-700">{request.justification}</div>
+//                   </div>
+//                 )}
+
+//                 <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+//                   <button
+//                     onClick={() => openCommentModal(request.request_id, "DENIED")}
+//                     disabled={processingId === request.request_id}
+//                     className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50"
+//                   >
+//                     Deny
+//                   </button>
+//                   <button
+//                     onClick={() => handleApproval(request.request_id, "APPROVED")}
+//                     disabled={processingId === request.request_id}
+//                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2"
+//                   >
+//                     {processingId === request.request_id ? (
+//                       <>
+//                         <RefreshCw className="w-4 h-4 animate-spin" />
+//                         <span>Processing...</span>
+//                       </>
+//                     ) : (
+//                       <>
+//                         <CheckCircle className="w-4 h-4" />
+//                         <span>Approve</span>
+//                       </>
+//                     )}
+//                   </button>
+//                 </div>
+//               </div>
+//             </div>
+//           ))}
+//         </div>
+//       )}
+
+//       {/* Comment Modal */}
+//       {commentModal.show && (
+//         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+//           <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+//             <h3 className="text-lg font-semibold text-gray-900 mb-4">
+//               {commentModal.action === "DENIED" ? "Deny Request" : "Approve Request"}
+//             </h3>
+//             <div className="mb-4">
+//               <label className="block text-sm font-medium text-gray-700 mb-2">
+//                 {commentModal.action === "DENIED" ? "Reason for denial:" : "Comments (optional):"}
+//               </label>
+//               <textarea
+//                 value={comment}
+//                 onChange={(e) => setComment(e.target.value)}
+//                 placeholder={
+//                   commentModal.action === "DENIED" ? "Please provide a reason for denial..." : "Add any comments..."
+//                 }
+//                 rows={3}
+//                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+//               />
+//             </div>
+//             <div className="flex items-center justify-end space-x-3">
+//               <button
+//                 onClick={() => setCommentModal({ show: false, requestId: null, action: null })}
+//                 className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+//               >
+//                 Cancel
+//               </button>
+//               <button
+//                 onClick={() =>
+//                   commentModal.requestId &&
+//                   commentModal.action &&
+//                   handleApproval(commentModal.requestId, commentModal.action, comment)
+//                 }
+//                 disabled={commentModal.action === "DENIED" && !comment.trim()}
+//                 className={`px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 ${
+//                   commentModal.action === "DENIED"
+//                     ? "bg-red-600 text-white hover:bg-red-700"
+//                     : "bg-green-600 text-white hover:bg-green-700"
+//                 }`}
+//               >
+//                 {commentModal.action === "DENIED" ? "Deny Request" : "Approve Request"}
+//               </button>
+//             </div>
+//           </div>
+//         </div>
+//       )}
+//     </div>
+//   )
+// }
 
 // Simple Dashboard Component
 const Dashboard: React.FC<{ statusData: StatusData; authState: AuthState; connectionStatus: ConnectionStatus }> = ({
