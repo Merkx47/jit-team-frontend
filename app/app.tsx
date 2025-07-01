@@ -32,6 +32,7 @@ import {
   Mail,
   UserPlus,
   Copy,
+  EyeOff,
 } from "lucide-react"
 
 // Type Definitions
@@ -371,16 +372,56 @@ const getUrgencyColor = (urgency: string): string => {
   }
 }
 
-// Login Component (No Signup Toggle)
+// Login Component with Built-in Error Handling
 const LoginForm: React.FC<{
   loginForm: LoginForm
   setLoginForm: React.Dispatch<React.SetStateAction<LoginForm>>
   loading: boolean
-  handleLogin: () => void
+  handleLogin: () => Promise<void> | void // Make this return a promise
 }> = ({ loginForm, setLoginForm, loading, handleLogin }) => {
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const [showPassword, setShowPassword] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [attemptCount, setAttemptCount] = useState(0)
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    handleLogin()
+    setError(null) // Clear previous errors
+    
+    try {
+      await handleLogin()
+      setAttemptCount(0) // Reset on success
+    } catch (err: any) {
+      setAttemptCount(prev => prev + 1)
+      
+      // Different error messages based on the error or attempt count
+      if (err.message?.includes('Invalid credentials') || err.message?.includes('Unauthorized')) {
+        setError('Invalid email or password. Please check your credentials and try again.')
+      } else if (err.message?.includes('User not found')) {
+        setError('No account found with this email address.')
+      } else if (err.message?.includes('Account locked') || attemptCount >= 3) {
+        setError('Account temporarily locked due to multiple failed attempts. Contact your administrator.')
+      } else if (err.message?.includes('Network')) {
+        setError('Connection error. Please check your internet connection and try again.')
+      } else {
+        setError('Login failed. Please try again or contact support if the problem persists.')
+      }
+    }
+  }
+
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword)
+  }
+
+  // Clear error when user starts typing
+  const handleInputChange = (field: 'email' | 'password', value: string) => {
+    if (error) {
+      setError(null)
+    }
+    setLoginForm((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const clearError = () => {
+    setError(null)
   }
 
   return (
@@ -393,8 +434,43 @@ const LoginForm: React.FC<{
           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             QTEAM System
           </h1>
-          <p className="text-gray-600 mt-2">Temporary Elevated Access Management</p>
+          <p className="text-gray-600 mt-2">Qucoon Temporary Elevated Access Management</p>
         </div>
+
+        {/* Error Alert */}
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg animate-in slide-in-from-top-2 duration-300">
+            <div className="flex items-start">
+              <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 mr-3 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-red-800 font-medium">Authentication Failed</p>
+                <p className="text-sm text-red-700 mt-1">{error}</p>
+                {attemptCount > 1 && (
+                  <p className="text-xs text-red-600 mt-2">
+                    Attempt {attemptCount} of 5
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={clearError}
+                className="text-red-400 hover:text-red-600 transition-colors"
+                aria-label="Dismiss error"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Success indicator when no error and not loading */}
+        {!error && !loading && attemptCount === 0 && loginForm.email && loginForm.password && (
+          <div className="mb-6 p-3 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center">
+              <CheckCircle className="w-4 h-4 text-green-500 mr-2" />
+              <p className="text-sm text-green-800">Ready to sign in</p>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleLoginSubmit} className="space-y-6">
           <div>
@@ -402,34 +478,74 @@ const LoginForm: React.FC<{
             <input
               type="email"
               value={loginForm.email}
-              onChange={(e) => setLoginForm((prev) => ({ ...prev, email: e.target.value }))}
+              onChange={(e) => handleInputChange('email', e.target.value)}
               placeholder="Enter your email"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 transition-all duration-200 ${
+                error 
+                  ? 'border-red-300 bg-red-50 focus:ring-red-500 focus:border-red-500' 
+                  : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500'
+              }`}
               required
+              autoComplete="email"
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-            <input
-              type="password"
-              value={loginForm.password}
-              onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
-              placeholder="Enter your password"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={loginForm.password}
+                onChange={(e) => handleInputChange('password', e.target.value)}
+                placeholder="Enter your password"
+                className={`w-full px-4 py-3 pr-12 border rounded-lg focus:ring-2 transition-all duration-200 ${
+                  error 
+                    ? 'border-red-300 bg-red-50 focus:ring-red-500 focus:border-red-500' 
+                    : 'border-gray-300 focus:ring-blue-500 focus:border-blue-500'
+                }`}
+                required
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={togglePasswordVisibility}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-600 focus:outline-none transition-colors"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {!showPassword ? (
+                  <EyeOff className="w-5 h-5" />
+                ) : (
+                  <Eye className="w-5 h-5" />
+                )}
+              </button>
+            </div>
           </div>
 
           <button
             type="submit"
-            disabled={loading}
-            className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+            disabled={loading || attemptCount >= 5}
+            className={`w-full py-3 px-4 rounded-lg font-medium transition-all duration-200 flex items-center justify-center space-x-2 ${
+              loading || attemptCount >= 5
+                ? 'bg-gray-400 text-white cursor-not-allowed'
+                : error
+                ? 'bg-red-600 text-white hover:bg-red-700'
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
           >
             {loading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
                 <span>Signing in...</span>
+              </>
+            ) : attemptCount >= 5 ? (
+              <>
+                <Shield className="w-4 h-4" />
+                <span>Account Locked</span>
+              </>
+            ) : error ? (
+              <>
+                <RotateCcw className="w-4 h-4" />
+                <span>Try Again</span>
               </>
             ) : (
               <>
@@ -440,21 +556,108 @@ const LoginForm: React.FC<{
           </button>
         </form>
 
-        <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-          <p className="text-sm text-blue-800 font-medium mb-2">Demo Credentials:</p>
-          <div className="text-xs text-blue-700 space-y-1">
-            <div>Admin: admin@company.com / password123</div>
-            <div>User: user@company.com / password123</div>
-          </div>
-        </div>
-
-        <div className="mt-4 text-center">
-          <p className="text-sm text-gray-600">Need an account? Contact your administrator for an invitation.</p>
+        {/* Help text */}
+        <div className="mt-6 text-center">
+          <p className="text-sm text-gray-600">
+            Need an account? Contact your administrator for an invitation.
+          </p>
+          {attemptCount > 2 && (
+            <p className="text-xs text-red-600 mt-2">
+              Having trouble? Contact support at support@qucoon.com
+            </p>
+          )}
         </div>
       </div>
     </div>
   )
 }
+
+
+
+// // Login Component (No Signup Toggle)
+// const LoginForm: React.FC<{
+//   loginForm: LoginForm
+//   setLoginForm: React.Dispatch<React.SetStateAction<LoginForm>>
+//   loading: boolean
+//   handleLogin: () => void
+// }> = ({ loginForm, setLoginForm, loading, handleLogin }) => {
+//   const handleLoginSubmit = (e: React.FormEvent) => {
+//     e.preventDefault()
+//     handleLogin()
+//   }
+
+//   return (
+//     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4">
+//       <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8">
+//         <div className="text-center mb-8">
+//           <div className="p-3 bg-blue-100 rounded-xl inline-block mb-4">
+//             <Shield className="w-12 h-12 text-blue-600" />
+//           </div>
+//           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+//             QTEAM System
+//           </h1>
+//           <p className="text-gray-600 mt-2">Qucoon Temporary Elevated Access Management</p>
+//         </div>
+
+//         <form onSubmit={handleLoginSubmit} className="space-y-6">
+//           <div>
+//             <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
+//             <input
+//               type="email"
+//               value={loginForm.email}
+//               onChange={(e) => setLoginForm((prev) => ({ ...prev, email: e.target.value }))}
+//               placeholder="Enter your email"
+//               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+//               required
+//             />
+//           </div>
+
+//           <div>
+//             <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+//             <input
+//               type="password"
+//               value={loginForm.password}
+//               onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
+//               placeholder="Enter your password"
+//               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+//               required
+//             />
+//           </div>
+
+//           <button
+//             type="submit"
+//             disabled={loading}
+//             className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+//           >
+//             {loading ? (
+//               <>
+//                 <RefreshCw className="w-4 h-4 animate-spin" />
+//                 <span>Signing in...</span>
+//               </>
+//             ) : (
+//               <>
+//                 <LogIn className="w-4 h-4" />
+//                 <span>Sign In</span>
+//               </>
+//             )}
+//           </button>
+//         </form>
+
+//         {/* <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+//           <p className="text-sm text-blue-800 font-medium mb-2">Demo Credentials:</p>
+//           <div className="text-xs text-blue-700 space-y-1">
+//             <div>Admin: admin@company.com / password123</div>
+//             <div>User: user@company.com / password123</div>
+//           </div>
+//         </div> */}
+
+//         <div className="mt-4 text-center">
+//           <p className="text-sm text-gray-600">Need an account? Contact your administrator for an invitation.</p>
+//         </div>
+//       </div>
+//     </div>
+//   )
+// }
 
 // Token-based Signup Component
 const TokenSignupForm: React.FC<{
@@ -588,7 +791,7 @@ const Header: React.FC<{
 }> = ({ authState, statusData, connectionStatus, handleLogout }) => (
   <header className="bg-white shadow-sm border-b border-gray-200">
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between h-20">
+      <div className="flex items-center justify-between h-max flex-wrap">
         <div className="flex items-center">
           <div className="p-2 bg-blue-100 rounded-xl mr-4">
             <Shield className="w-10 h-10 text-blue-600" />
