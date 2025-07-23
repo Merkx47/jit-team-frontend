@@ -17,6 +17,7 @@ import {
   Download,
   Trash2,
   Bell,
+  Upload,
   Activity,
   BarChart3,
   ChevronDown,
@@ -36,6 +37,7 @@ import {
   UserPlus,
   Copy,
   EyeOff,
+  Cloud,
 } from "lucide-react"
 
 // Type Definitions
@@ -85,6 +87,7 @@ interface RequestForm {
   duration_minutes: number
   justification: string
   urgency: string
+  account_id: string
 }
 
 interface Notification {
@@ -198,9 +201,13 @@ const apiCall = async (endpoint: string, data: any = null, method = "POST", requ
       if (response.status === 401) {
         removeAuthToken()
         window.location.reload()
+        throw new Error("Your session has expired. Please log in again.")
       }
 
-      throw new Error(errorData.message || errorData.detail || `Request failed with status ${response.status}`)
+      // Enhanced user-friendly error messages based on status code and content
+      let friendlyMessage = getFriendlyErrorMessage(response.status, errorData, endpoint)
+      
+      throw new Error(friendlyMessage)
     }
 
     const result = await response.json()
@@ -219,7 +226,87 @@ const apiCall = async (endpoint: string, data: any = null, method = "POST", requ
       throw new Error("No internet connection. Please check your network and try again.")
     }
 
+    // Re-throw the error as-is (it already has a good message from above)
     throw error
+  }
+}
+
+// Helper function for user-friendly error messages
+const getFriendlyErrorMessage = (status: number, errorData: any, endpoint: string): string => {
+  const originalMessage = errorData.message || errorData.detail || ""
+  
+  // Handle specific error cases with user-friendly messages
+  if (originalMessage.includes("User with this email already exists")) {
+    return "This email address already has an account. Please use the login form instead."
+  }
+  
+  if (originalMessage.includes("Invalid email or password") || originalMessage.includes("Invalid credentials")) {
+    return "The email or password you entered is incorrect. Please check your credentials and try again."
+  }
+  
+  if (originalMessage.includes("User not found")) {
+    return "No account found with this email address. Please check the email or contact your administrator for an invitation."
+  }
+  
+  if (originalMessage.includes("Account is disabled") || originalMessage.includes("not active")) {
+    return "Your account has been disabled. Please contact your administrator for assistance."
+  }
+  
+  if (originalMessage.includes("Admin access required") || originalMessage.includes("permission")) {
+    return "You don't have permission to perform this action. Contact your administrator if you believe this is an error."
+  }
+  
+  if (originalMessage.includes("Invalid signup token") || originalMessage.includes("expired")) {
+    return "This invitation link has expired or is invalid. Please request a new invitation from your administrator."
+  }
+  
+  if (originalMessage.includes("AWS account")) {
+    if (originalMessage.includes("not found")) {
+      return "The selected AWS account is no longer available. Please choose a different account."
+    }
+    if (originalMessage.includes("not active")) {
+      return "The selected AWS account is currently inactive. Please choose a different account."
+    }
+  }
+  
+  if (originalMessage.includes("Account number must be exactly 12 digits")) {
+    return "AWS account number must be exactly 12 digits. Please check the account number and try again."
+  }
+  
+  if (originalMessage.includes("already exists") && endpoint.includes("aws-accounts")) {
+    return "An AWS account with this number already exists in the system."
+  }
+  
+  if (originalMessage.includes("rate limit") || originalMessage.includes("too many")) {
+    return "Too many requests. Please wait a few minutes before trying again."
+  }
+  
+  if (originalMessage.includes("validation") || originalMessage.includes("invalid data")) {
+    return "Please check your information and make sure all required fields are filled out correctly."
+  }
+  
+  // Status code based messages
+  switch (status) {
+    case 400:
+      return originalMessage || "Invalid request. Please check your information and try again."
+    case 403:
+      return "You don't have permission to perform this action."
+    case 404:
+      return "The requested resource was not found. It may have been deleted or moved."
+    case 409:
+      return originalMessage || "This action conflicts with existing data. Please check and try again."
+    case 422:
+      return "The information provided is invalid. Please check all fields and try again."
+    case 429:
+      return "Too many requests. Please wait a moment and try again."
+    case 500:
+      return "Server error. Please try again later or contact support if the problem persists."
+    case 502:
+    case 503:
+    case 504:
+      return "Service is temporarily unavailable. Please try again in a few moments."
+    default:
+      return originalMessage || `Something went wrong (Error ${status}). Please try again or contact support.`
   }
 }
 
@@ -575,93 +662,6 @@ const LoginForm: React.FC<{
   )
 }
 
-
-
-// // Login Component (No Signup Toggle)
-// const LoginForm: React.FC<{
-//   loginForm: LoginForm
-//   setLoginForm: React.Dispatch<React.SetStateAction<LoginForm>>
-//   loading: boolean
-//   handleLogin: () => void
-// }> = ({ loginForm, setLoginForm, loading, handleLogin }) => {
-//   const handleLoginSubmit = (e: React.FormEvent) => {
-//     e.preventDefault()
-//     handleLogin()
-//   }
-
-//   return (
-//     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4">
-//       <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8">
-//         <div className="text-center mb-8">
-//           <div className="p-3 bg-blue-100 rounded-xl inline-block mb-4">
-//             <Shield className="w-12 h-12 text-blue-600" />
-//           </div>
-//           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-//             QTEAM System
-//           </h1>
-//           <p className="text-gray-600 mt-2">Qucoon Temporary Elevated Access Management</p>
-//         </div>
-
-//         <form onSubmit={handleLoginSubmit} className="space-y-6">
-//           <div>
-//             <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
-//             <input
-//               type="email"
-//               value={loginForm.email}
-//               onChange={(e) => setLoginForm((prev) => ({ ...prev, email: e.target.value }))}
-//               placeholder="Enter your email"
-//               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-//               required
-//             />
-//           </div>
-
-//           <div>
-//             <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-//             <input
-//               type="password"
-//               value={loginForm.password}
-//               onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
-//               placeholder="Enter your password"
-//               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-//               required
-//             />
-//           </div>
-
-//           <button
-//             type="submit"
-//             disabled={loading}
-//             className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
-//           >
-//             {loading ? (
-//               <>
-//                 <RefreshCw className="w-4 h-4 animate-spin" />
-//                 <span>Signing in...</span>
-//               </>
-//             ) : (
-//               <>
-//                 <LogIn className="w-4 h-4" />
-//                 <span>Sign In</span>
-//               </>
-//             )}
-//           </button>
-//         </form>
-
-//         {/* <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-//           <p className="text-sm text-blue-800 font-medium mb-2">Demo Credentials:</p>
-//           <div className="text-xs text-blue-700 space-y-1">
-//             <div>Admin: admin@company.com / password123</div>
-//             <div>User: user@company.com / password123</div>
-//           </div>
-//         </div> */}
-
-//         <div className="mt-4 text-center">
-//           <p className="text-sm text-gray-600">Need an account? Contact your administrator for an invitation.</p>
-//         </div>
-//       </div>
-//     </div>
-//   )
-// }
-
 // Token-based Signup Component
 const TokenSignupForm: React.FC<{
   signupForm: any
@@ -670,10 +670,95 @@ const TokenSignupForm: React.FC<{
   handleSignup: () => void
   tokenEmail: string
 }> = ({ signupForm, setSignupForm, loading, handleSignup, tokenEmail }) => {
+  const [errors, setErrors] = useState<{[key: string]: string}>({})
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+
+  // Validation functions
+  const validateField = (field: string, value: string): string | null => {
+    switch (field) {
+      case 'first_name':
+        if (!value.trim()) return "First name is required"
+        if (value.trim().length < 2) return "First name must be at least 2 characters"
+        if (!/^[a-zA-Z\s'-]+$/.test(value)) return "First name can only contain letters, spaces, hyphens, and apostrophes"
+        return null
+        
+      case 'last_name':
+        if (!value.trim()) return "Last name is required"
+        if (value.trim().length < 2) return "Last name must be at least 2 characters"
+        if (!/^[a-zA-Z\s'-]+$/.test(value)) return "Last name can only contain letters, spaces, hyphens, and apostrophes"
+        return null
+        
+      case 'password':
+        if (!value) return "Password is required"
+        if (value.length < 8) return "Password must be at least 8 characters long"
+        if (!/(?=.*[a-z])/.test(value)) return "Password must contain at least one lowercase letter"
+        if (!/(?=.*[A-Z])/.test(value)) return "Password must contain at least one uppercase letter"
+        if (!/(?=.*\d)/.test(value)) return "Password must contain at least one number"
+        return null
+        
+      case 'confirmPassword':
+        if (!value) return "Please confirm your password"
+        if (value !== signupForm.password) return "Passwords do not match"
+        return null
+        
+      default:
+        return null
+    }
+  }
+
+  const handleFieldChange = (field: string, value: string) => {
+    setSignupForm((prev: any) => ({ ...prev, [field]: value }))
+    
+    // Clear error when user starts typing
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: "" }))
+    }
+    
+    // Also clear confirmPassword error if password changes
+    if (field === 'password' && errors.confirmPassword) {
+      setErrors(prev => ({ ...prev, confirmPassword: "" }))
+    }
+  }
+
+  const validateForm = (): boolean => {
+    const newErrors: {[key: string]: string} = {}
+    
+    const fields = ['first_name', 'last_name', 'password', 'confirmPassword']
+    fields.forEach(field => {
+      const error = validateField(field, signupForm[field] || '')
+      if (error) {
+        newErrors[field] = error
+      }
+    })
+    
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
+
   const handleSignupSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    handleSignup()
+    
+    if (validateForm()) {
+      handleSignup()
+    }
   }
+
+  const getPasswordStrength = (password: string): { strength: number, text: string, color: string } => {
+    let strength = 0
+    if (password.length >= 8) strength++
+    if (/(?=.*[a-z])/.test(password)) strength++
+    if (/(?=.*[A-Z])/.test(password)) strength++
+    if (/(?=.*\d)/.test(password)) strength++
+    if (/(?=.*[!@#$%^&*])/.test(password)) strength++
+    
+    if (strength <= 2) return { strength, text: "Weak", color: "text-red-600" }
+    if (strength <= 3) return { strength, text: "Fair", color: "text-yellow-600" }
+    if (strength <= 4) return { strength, text: "Good", color: "text-blue-600" }
+    return { strength, text: "Strong", color: "text-green-600" }
+  }
+
+  const passwordStrength = getPasswordStrength(signupForm.password || '')
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-100 flex items-center justify-center px-4">
@@ -697,26 +782,48 @@ const TokenSignupForm: React.FC<{
         <form onSubmit={handleSignupSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">First Name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">First Name *</label>
               <input
                 type="text"
-                value={signupForm.first_name}
-                onChange={(e) => setSignupForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                value={signupForm.first_name || ''}
+                onChange={(e) => handleFieldChange('first_name', e.target.value)}
                 placeholder="First name"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className={`w-full px-4 py-3 border rounded-lg focus:ring-2 transition-colors ${
+                  errors.first_name 
+                    ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
+                    : 'border-gray-300 focus:ring-green-500 focus:border-green-500'
+                }`}
                 required
+                disabled={loading}
               />
+              {errors.first_name && (
+                <p className="mt-1 text-sm text-red-600 flex items-center">
+                  <AlertCircle className="w-4 h-4 mr-1" />
+                  {errors.first_name}
+                </p>
+              )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Last Name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Last Name *</label>
               <input
                 type="text"
-                value={signupForm.last_name}
-                onChange={(e) => setSignupForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                value={signupForm.last_name || ''}
+                onChange={(e) => handleFieldChange('last_name', e.target.value)}
                 placeholder="Last name"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className={`w-full px-4 py-3 border rounded-lg focus:ring-2 transition-colors ${
+                  errors.last_name 
+                    ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
+                    : 'border-gray-300 focus:ring-green-500 focus:border-green-500'
+                }`}
                 required
+                disabled={loading}
               />
+              {errors.last_name && (
+                <p className="mt-1 text-sm text-red-600 flex items-center">
+                  <AlertCircle className="w-4 h-4 mr-1" />
+                  {errors.last_name}
+                </p>
+              )}
             </div>
           </div>
 
@@ -732,33 +839,114 @@ const TokenSignupForm: React.FC<{
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-            <input
-              type="password"
-              value={signupForm.password}
-              onChange={(e) => setSignupForm((prev) => ({ ...prev, password: e.target.value }))}
-              placeholder="Create a secure password (min 8 characters)"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-              required
-              minLength={8}
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-2">Password *</label>
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={signupForm.password || ''}
+                onChange={(e) => handleFieldChange('password', e.target.value)}
+                placeholder="Create a secure password"
+                className={`w-full px-4 py-3 pr-12 border rounded-lg focus:ring-2 transition-colors ${
+                  errors.password 
+                    ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
+                    : 'border-gray-300 focus:ring-green-500 focus:border-green-500'
+                }`}
+                required
+                disabled={loading}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-600"
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
+            
+            {/* Password strength indicator */}
+            {signupForm.password && (
+              <div className="mt-2">
+                <div className="flex items-center space-x-2">
+                  <div className="flex-1 bg-gray-200 rounded-full h-2">
+                    <div 
+                      className={`h-2 rounded-full transition-all duration-300 ${
+                        passwordStrength.strength <= 2 ? 'bg-red-500' :
+                        passwordStrength.strength <= 3 ? 'bg-yellow-500' :
+                        passwordStrength.strength <= 4 ? 'bg-blue-500' : 'bg-green-500'
+                      }`}
+                      style={{ width: `${(passwordStrength.strength / 5) * 100}%` }}
+                    ></div>
+                  </div>
+                  <span className={`text-xs font-medium ${passwordStrength.color}`}>
+                    {passwordStrength.text}
+                  </span>
+                </div>
+              </div>
+            )}
+            
+            {errors.password && (
+              <p className="mt-1 text-sm text-red-600 flex items-center">
+                <AlertCircle className="w-4 h-4 mr-1" />
+                {errors.password}
+              </p>
+            )}
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Confirm Password</label>
-            <input
-              type="password"
-              value={signupForm.confirmPassword}
-              onChange={(e) => setSignupForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
-              placeholder="Confirm your password"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-              required
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-2">Confirm Password *</label>
+            <div className="relative">
+              <input
+                type={showConfirmPassword ? "text" : "password"}
+                value={signupForm.confirmPassword || ''}
+                onChange={(e) => handleFieldChange('confirmPassword', e.target.value)}
+                placeholder="Confirm your password"
+                className={`w-full px-4 py-3 pr-12 border rounded-lg focus:ring-2 transition-colors ${
+                  errors.confirmPassword 
+                    ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
+                    : signupForm.confirmPassword && signupForm.confirmPassword === signupForm.password
+                      ? 'border-green-300 focus:ring-green-500 focus:border-green-500'
+                      : 'border-gray-300 focus:ring-green-500 focus:border-green-500'
+                }`}
+                required
+                disabled={loading}
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-600"
+              >
+                {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
+            
+            {/* Password match indicator */}
+            {signupForm.confirmPassword && (
+              <div className="mt-1">
+                {signupForm.confirmPassword === signupForm.password ? (
+                  <p className="text-sm text-green-600 flex items-center">
+                    <CheckCircle className="w-4 h-4 mr-1" />
+                    Passwords match
+                  </p>
+                ) : (
+                  <p className="text-sm text-red-600 flex items-center">
+                    <AlertCircle className="w-4 h-4 mr-1" />
+                    Passwords do not match
+                  </p>
+                )}
+              </div>
+            )}
+            
+            {errors.confirmPassword && (
+              <p className="mt-1 text-sm text-red-600 flex items-center">
+                <AlertCircle className="w-4 h-4 mr-1" />
+                {errors.confirmPassword}
+              </p>
+            )}
           </div>
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || Object.keys(errors).length > 0}
             className="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
           >
             {loading ? (
@@ -864,13 +1052,29 @@ const Navigation: React.FC<{
     }
 
     if (authState.user?.role === "admin") {
-      return [
-        ...baseItems,
-        { id: "admin", label: "Administration", icon: Settings },
-        { id: "approvals", label: "All Requests", icon: Users, badge: statusData.summary.pending },
-        { id: "invitations", label: "User Invitations", icon: Mail },
-      ]
-    }
+        return [
+          ...baseItems,
+          { id: "admin", label: "Administration", icon: Settings },
+          { 
+            id: "approvals", 
+            label: "All Requests", 
+            icon: Users,
+            ...(statusData.summary.pending > 0 && { badge: statusData.summary.pending })
+          },
+          { id: "invitations", label: "User Invitations", icon: Mail },
+          { id: "aws-accounts", label: "AWS Accounts", icon: Cloud },
+        ]
+      }
+
+    // if (authState.user?.role === "admin") {
+    //   return [
+    //     ...baseItems,
+    //     { id: "admin", label: "Administration", icon: Settings },
+    //     { id: "approvals", label: "All Requests", icon: Users, badge: statusData.summary.pending },
+    //     { id: "invitations", label: "User Invitations", icon: Mail },
+    //     { id: "aws-accounts", label: "AWS Accounts", icon: Cloud },
+    //   ]
+    // }
 
     return baseItems
   }
@@ -916,11 +1120,11 @@ const Notifications: React.FC<{ notifications: Notification[] }> = ({ notificati
       >
         <div className="flex items-start">
           {notification.type === "success" ? (
-            <CheckCircle className="w-5 h-5 mr-3 mt-0.5 text-green-600" />
+            <CheckCircle className="w-5 h-5 mr-3 mt-0.5 text-green-600 flex-shrink-0" />
           ) : (
-            <XCircle className="w-5 h-5 mr-3 mt-0.5 text-red-600" />
+            <XCircle className="w-5 h-5 mr-3 mt-0.5 text-red-600 flex-shrink-0" />
           )}
-          <div className="text-sm leading-relaxed">{notification.message}</div>
+          <div className="text-sm leading-relaxed whitespace-pre-line">{notification.message}</div>
         </div>
       </div>
     ))}
@@ -935,32 +1139,73 @@ const UserInvitations: React.FC<{
   const [inviteRole, setInviteRole] = useState("user")
   const [loading, setLoading] = useState(false)
   const [generatedLink, setGeneratedLink] = useState("")
+  const [errors, setErrors] = useState<{[key: string]: string}>({})
+
+  // Email validation function
+  const validateEmail = (email: string): string | null => {
+    if (!email.trim()) {
+      return "Email address is required"
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return "Please enter a valid email address"
+    }
+    
+    if (email.length > 254) {
+      return "Email address is too long"
+    }
+    
+    return null
+  }
+
+  // Clear errors when user starts typing
+  const handleEmailChange = (email: string) => {
+    setInviteEmail(email)
+    if (errors.email) {
+      setErrors(prev => ({ ...prev, email: "" }))
+    }
+    if (generatedLink) {
+      setGeneratedLink("")
+    }
+  }
 
   const handleSendInvitation = async () => {
-    if (!inviteEmail) {
-      addNotification("Please enter an email address", "error")
+    // Clear previous errors
+    setErrors({})
+    
+    // Validate email
+    const emailError = validateEmail(inviteEmail)
+    if (emailError) {
+      setErrors({ email: emailError })
+      addNotification(emailError, "error")
       return
     }
 
     try {
       setLoading(true)
       const response = await apiCall("/auth/generate-signup-link", {
-        email: inviteEmail,
+        email: inviteEmail.trim().toLowerCase(),
         role: inviteRole,
       })
 
       if (response.status === "SUCCESS") {
-        // The backend returns signup_link, so use that
-        const signupLink = response.data.signup_link
+        const signupLink = response.data.signup_url || response.data.signup_link
         setGeneratedLink(signupLink)
-        addNotification("Invitation created successfully!", "success")
+        addNotification(`✅ Invitation sent successfully to ${inviteEmail}!`, "success")
         setInviteEmail("")
+        setErrors({})
       } else {
         addNotification(response.message || "Failed to create invitation", "error")
       }
     } catch (error: any) {
       console.error("Error creating invitation:", error)
-      addNotification(`Error: ${error.message}`, "error")
+      addNotification(error.message, "error")
+      
+      // Set field-specific errors if needed
+      if (error.message.includes("email")) {
+        setErrors({ email: error.message })
+      }
     } finally {
       setLoading(false)
     }
@@ -969,10 +1214,21 @@ const UserInvitations: React.FC<{
   const copyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(generatedLink)
-      addNotification("Invitation link copied to clipboard!", "success")
+      addNotification("✅ Invitation link copied to clipboard!", "success")
     } catch (error) {
-      addNotification("Failed to copy link", "error")
+      // Fallback for older browsers
+      const textArea = document.createElement("textarea")
+      textArea.value = generatedLink
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      addNotification("✅ Invitation link copied to clipboard!", "success")
     }
+  }
+
+  const isFormValid = () => {
+    return inviteEmail.trim() && !validateEmail(inviteEmail) && !loading
   }
 
   return (
@@ -988,15 +1244,41 @@ const UserInvitations: React.FC<{
 
         <div className="p-6 space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Email Address *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Email Address *
+            </label>
             <input
               type="email"
               value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
+              onChange={(e) => handleEmailChange(e.target.value)}
               placeholder="Enter user's email address"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:border-blue-500 transition-colors ${
+                errors.email 
+                  ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
+                  : generatedLink 
+                    ? 'border-green-300 bg-green-50 focus:ring-green-500' 
+                    : 'border-gray-300 focus:ring-blue-500'
+              }`}
               required
+              disabled={loading}
+              autoComplete="email"
             />
+            
+            {/* Email validation feedback */}
+            {errors.email && (
+              <div className="mt-1 flex items-center text-red-600 text-sm">
+                <AlertCircle className="w-4 h-4 mr-1" />
+                {errors.email}
+              </div>
+            )}
+            
+            {/* Success feedback */}
+            {!errors.email && inviteEmail && !validateEmail(inviteEmail) && (
+              <div className="mt-1 flex items-center text-green-600 text-sm">
+                <CheckCircle className="w-4 h-4 mr-1" />
+                Email format is valid
+              </div>
+            )}
           </div>
 
           <div>
@@ -1004,17 +1286,21 @@ const UserInvitations: React.FC<{
             <select
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              disabled={loading}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
             >
               <option value="user">User - Can request access</option>
               <option value="admin">Admin - Can approve requests and manage users</option>
             </select>
+            <p className="text-xs text-gray-500 mt-1">
+              Choose the appropriate role based on the user's responsibilities
+            </p>
           </div>
 
           <button
             onClick={handleSendInvitation}
-            disabled={loading || !inviteEmail}
-            className="bg-blue-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-blue-700 transition-all duration-200 flex items-center space-x-2"
+            disabled={!isFormValid()}
+            className="bg-blue-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-blue-700 transition-all duration-200 flex items-center space-x-2 w-full sm:w-auto"
           >
             {loading ? (
               <>
@@ -1029,35 +1315,44 @@ const UserInvitations: React.FC<{
             )}
           </button>
 
+          {/* Success state with better messaging */}
           {generatedLink && (
-            <div className="mt-6 p-4 bg-green-50 rounded-lg border border-green-200">
-              <h4 className="font-medium text-green-900 mb-2">Invitation Created!</h4>
+            <div className="mt-6 p-4 bg-green-50 rounded-lg border border-green-200 animate-in slide-in-from-top-2 duration-300">
+              <h4 className="font-medium text-green-900 mb-2 flex items-center">
+                <CheckCircle className="w-5 h-5 mr-2" />
+                Invitation Created Successfully!
+              </h4>
               <p className="text-sm text-green-700 mb-3">
-                Share this link with the user to complete their registration:
+                📧 An invitation has been created for <strong>{inviteEmail}</strong> as a <strong>{inviteRole}</strong>. 
+                Share this secure link with them:
               </p>
               <div className="flex items-center space-x-2">
                 <input
                   type="text"
                   value={generatedLink}
                   readOnly
-                  className="flex-1 px-3 py-2 text-sm border border-green-300 rounded bg-white"
+                  className="flex-1 px-3 py-2 text-sm border border-green-300 rounded bg-white font-mono text-xs"
                 />
                 <button
                   onClick={copyToClipboard}
-                  className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors flex items-center space-x-1"
+                  className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors flex items-center space-x-1 flex-shrink-0"
+                  title="Copy invitation link"
                 >
                   <Copy className="w-4 h-4" />
-                  <span className="text-sm">Copy</span>
+                  <span className="text-sm hidden sm:inline">Copy</span>
                 </button>
               </div>
-              <p className="text-xs text-green-600 mt-2">
-                💡 Send this link via email or your preferred communication method
-              </p>
+              <div className="mt-3 text-xs text-green-600 space-y-1">
+                <p>💡 Send this link via email or your preferred secure communication method</p>
+                <p>⏰ This invitation link will expire in 72 hours</p>
+                <p>🔒 The user will be able to create their account immediately using this link</p>
+              </div>
             </div>
           )}
         </div>
       </div>
 
+      {/* How it works section - same as before */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <h4 className="text-lg font-semibold text-gray-900 mb-4">How User Invitations Work</h4>
         <div className="space-y-3 text-sm text-gray-600">
@@ -1102,6 +1397,654 @@ const UserInvitations: React.FC<{
   )
 }
 
+// AWS Accounts Management Component
+const AWSAccountsManagement: React.FC<{
+  addNotification: (message: string, type: "success" | "error") => void
+}> = ({ addNotification }) => {
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [filterActive, setFilterActive] = useState("all")
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingAccount, setEditingAccount] = useState<any>(null)
+  const [newAccount, setNewAccount] = useState({
+    account_number: "",
+    account_name: "",
+  })
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
+
+  useEffect(() => {
+    loadAccounts()
+  }, [])
+
+  const loadAccounts = async () => {
+    try {
+      setLoading(true)
+      const response = await apiCall("/admin/aws-accounts", null, "GET")
+      
+      if (response.status === "SUCCESS" && response.data?.accounts) {
+        setAccounts(response.data.accounts)
+      } else {
+        addNotification("Failed to load AWS accounts", "error")
+      }
+    } catch (err: any) {
+      console.error("Error loading AWS accounts:", err)
+      addNotification(`Error: ${err.message}`, "error")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAddAccount = async () => {
+    try {
+      if (!newAccount.account_number.match(/^\d{12}$/)) {
+        addNotification("Account number must be exactly 12 digits", "error")
+        return
+      }
+
+      if (!newAccount.account_name.trim()) {
+        addNotification("Account name is required", "error")
+        return
+      }
+
+      setLoading(true)
+      const response = await apiCall("/admin/aws-accounts", newAccount)
+      
+      if (response.status === "SUCCESS") {
+        addNotification("AWS account added successfully!", "success")
+        setNewAccount({ account_number: "", account_name: "" })
+        setShowAddModal(false)
+        await loadAccounts()
+      } else {
+        addNotification(response.message || "Failed to add account", "error")
+      }
+    } catch (error: any) {
+      console.error("Error adding account:", error)
+      addNotification(`Error: ${error.message}`, "error")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleEditAccount = async () => {
+    try {
+      if (!editingAccount?.account_name.trim()) {
+        addNotification("Account name is required", "error")
+        return
+      }
+
+      setLoading(true)
+      const response = await apiCall(`/admin/aws-accounts/${editingAccount.account_id}`, {
+        account_name: editingAccount.account_name,
+        is_active: editingAccount.is_active
+      }, "PUT")
+      
+      if (response.status === "SUCCESS") {
+        addNotification("AWS account updated successfully!", "success")
+        setShowEditModal(false)
+        setEditingAccount(null)
+        await loadAccounts()
+      } else {
+        addNotification(response.message || "Failed to update account", "error")
+      }
+    } catch (error: any) {
+      console.error("Error updating account:", error)
+      addNotification(`Error: ${error.message}`, "error")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeactivateAccount = async (accountId: string, accountName: string) => {
+    if (!confirm(`Are you sure you want to deactivate "${accountName}"? This will prevent new requests but won't affect active sessions.`)) {
+      return
+    }
+
+    try {
+      setLoading(true)
+      const response = await apiCall(`/admin/aws-accounts/${accountId}`, null, "DELETE")
+      
+      if (response.status === "SUCCESS") {
+        addNotification("AWS account deactivated successfully!", "success")
+        await loadAccounts()
+      } else {
+        addNotification(response.message || "Failed to deactivate account", "error")
+      }
+    } catch (error: any) {
+      console.error("Error deactivating account:", error)
+      addNotification(`Error: ${error.message}`, "error")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const exportAccounts = () => {
+    const csvData = [
+      ['Account Name', 'Account Number', 'Status', 'Created At', 'Created By'].join(','),
+      ...filteredAccounts.map(account => [
+        `"${account.account_name}"`,
+        account.account_number,
+        account.is_active ? 'Active' : 'Inactive',
+        new Date(account.created_at).toLocaleDateString(),
+        `"${account.created_by}"`
+      ].join(','))
+    ].join('\n')
+
+    const blob = new Blob([csvData], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `aws-accounts-${new Date().toISOString().split('T')[0]}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+    
+    addNotification("AWS accounts exported successfully!", "success")
+  }
+
+  // Filter accounts
+  const filteredAccounts = accounts.filter(account => {
+    const matchesSearch = 
+      account.account_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      account.account_number.includes(searchTerm) ||
+      account.created_by?.toLowerCase().includes(searchTerm.toLowerCase())
+    
+    const matchesFilter = 
+      filterActive === "all" || 
+      (filterActive === "active" && account.is_active) || 
+      (filterActive === "inactive" && !account.is_active)
+    
+    return matchesSearch && matchesFilter
+  })
+
+  // Pagination
+  const totalItems = filteredAccounts.length
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedAccounts = filteredAccounts.slice(startIndex, endIndex)
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, filterActive])
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-semibold text-gray-900 flex items-center">
+            <Cloud className="w-6 h-6 mr-3 text-orange-500" />
+            AWS Accounts Management
+          </h3>
+          <p className="text-gray-600 mt-1">Manage available AWS accounts for temporary access requests</p>
+        </div>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={exportAccounts}
+            disabled={accounts.length === 0}
+            className="flex items-center space-x-2 px-4 py-2 text-green-600 border border-green-300 rounded-lg hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export CSV</span>
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Account</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Filters and Search */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center space-x-4">
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search accounts..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-64"
+              />
+            </div>
+            <select
+              value={filterActive}
+              onChange={(e) => setFilterActive(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="all">All Accounts</option>
+              <option value="active">Active Only</option>
+              <option value="inactive">Inactive Only</option>
+            </select>
+          </div>
+          <div className="flex items-center space-x-3">
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value={5}>5 per page</option>
+              <option value={10}>10 per page</option>
+              <option value={25}>25 per page</option>
+              <option value={50}>50 per page</option>
+            </select>
+            <button
+              onClick={loadAccounts}
+              disabled={loading}
+              className="text-blue-600 hover:text-blue-800 flex items-center text-sm font-medium px-3 py-2 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        {/* Summary Stats */}
+        <div className="mt-4 pt-4 border-t border-gray-200">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="text-center p-3 bg-orange-50 rounded-lg">
+              <div className="text-xl font-bold text-orange-600">{accounts.length}</div>
+              <div className="text-gray-600">Total AWS Accounts</div>
+            </div>
+            <div className="text-center p-3 bg-green-50 rounded-lg">
+              <div className="text-xl font-bold text-green-600">
+                {accounts.filter(a => a.is_active).length}
+              </div>
+              <div className="text-gray-600">Active</div>
+            </div>
+            <div className="text-center p-3 bg-red-50 rounded-lg">
+              <div className="text-xl font-bold text-red-600">
+                {accounts.filter(a => !a.is_active).length}
+              </div>
+              <div className="text-gray-600">Inactive</div>
+            </div>
+            <div className="text-center p-3 bg-gray-50 rounded-lg">
+              <div className="text-xl font-bold text-gray-600">{filteredAccounts.length}</div>
+              <div className="text-gray-600">Filtered Results</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Accounts Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {paginatedAccounts.length === 0 ? (
+          <div className="p-12 text-center">
+            <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Cloud className="w-8 h-8 text-orange-500" />
+            </div>
+            <div className="text-gray-500 text-lg mb-2">
+              {searchTerm || filterActive !== "all" ? "No accounts found" : "No AWS accounts configured"}
+            </div>
+            <div className="text-gray-400 text-sm">
+              {searchTerm || filterActive !== "all" 
+                ? "Try adjusting your search or filters" 
+                : "Add your first AWS account to get started"}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Account Details
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Created
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {paginatedAccounts.map((account) => (
+                    <tr key={account.account_id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4">
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">{account.account_name}</div>
+                          <div className="text-sm text-gray-500">{account.account_number}</div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          account.is_active 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {account.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        <div>{new Date(account.created_at).toLocaleDateString()}</div>
+                        <div className="text-xs">by {account.created_by}</div>
+                      </td>
+                      <td className="px-6 py-4 text-right text-sm font-medium space-x-2">
+                        <button
+                          onClick={() => {
+                            setEditingAccount({ ...account })
+                            setShowEditModal(true)
+                          }}
+                          className="text-blue-600 hover:text-blue-900 transition-colors"
+                        >
+                          Edit
+                        </button>
+                        {account.is_active && (
+                          <button
+                            onClick={() => handleDeactivateAccount(account.account_id, account.account_name)}
+                            className="text-red-600 hover:text-red-900 transition-colors"
+                          >
+                            Deactivate
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-gray-700">
+                    Showing {startIndex + 1} to {Math.min(endIndex, totalItems)} of {totalItems} accounts
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setCurrentPage(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-sm text-gray-600">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Add Account Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Add New AWS Account</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Account Number *
+                </label>
+                <input
+                  type="text"
+                  value={newAccount.account_number}
+                  onChange={(e) => setNewAccount(prev => ({ ...prev, account_number: e.target.value.replace(/\D/g, '').slice(0, 12) }))}
+                  placeholder="123456789012"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  maxLength={12}
+                />
+                <p className="text-xs text-gray-500 mt-1">Must be exactly 12 digits</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Account Name *
+                </label>
+                <input
+                  type="text"
+                  value={newAccount.account_name}
+                  onChange={(e) => setNewAccount(prev => ({ ...prev, account_name: e.target.value }))}
+                  placeholder="Production, Development, Testing, etc."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end space-x-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowAddModal(false)
+                  setNewAccount({ account_number: "", account_name: "" })
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddAccount}
+                disabled={loading || !newAccount.account_number || !newAccount.account_name}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? "Adding..." : "Add Account"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Account Modal */}
+      {showEditModal && editingAccount && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Edit AWS Account</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Account Number
+                </label>
+                <input
+                  type="text"
+                  value={editingAccount.account_number}
+                  readOnly
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600"
+                />
+                <p className="text-xs text-gray-500 mt-1">Account number cannot be changed</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Account Name *
+                </label>
+                <input
+                  type="text"
+                  value={editingAccount.account_name}
+                  onChange={(e) => setEditingAccount(prev => ({ ...prev, account_name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={editingAccount.is_active}
+                    onChange={(e) => setEditingAccount(prev => ({ ...prev, is_active: e.target.checked }))}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="ml-2 text-sm text-gray-700">Account is active</span>
+                </label>
+                <p className="text-xs text-gray-500 mt-1">Inactive accounts cannot be selected for new requests</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end space-x-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowEditModal(false)
+                  setEditingAccount(null)
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditAccount}
+                disabled={loading || !editingAccount?.account_name}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// AWS Account Selector Component
+const AWSAccountSelector: React.FC<{
+  selectedAccountId: string
+  onAccountChange: (accountId: string) => void
+  disabled?: boolean
+}> = ({ selectedAccountId, onAccountChange, disabled = false }) => {
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadAccounts()
+  }, [])
+
+  const loadAccounts = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      const response = await apiCall("/aws-accounts", null, "GET")
+      
+      if (response.status === "SUCCESS" && response.data?.accounts) {
+        setAccounts(response.data.accounts)
+      } else {
+        setError("Failed to load AWS accounts")
+      }
+    } catch (err: any) {
+      console.error("Error loading AWS accounts:", err)
+      setError(`Error: ${err.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRetry = () => {
+    loadAccounts()
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-gray-700">AWS Account *</label>
+        <div className="flex items-center space-x-2 p-3 border border-gray-300 rounded-lg bg-gray-50">
+          <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+          <span className="text-sm text-gray-600">Loading AWS accounts...</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-gray-700">AWS Account *</label>
+        <div className="p-3 border border-red-300 rounded-lg bg-red-50">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 text-red-500" />
+              <span className="text-sm text-red-700">{error}</span>
+            </div>
+            <button
+              onClick={handleRetry}
+              disabled={loading}
+              className="text-red-600 hover:text-red-800 text-sm font-medium flex items-center space-x-1"
+            >
+              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+              <span>Retry</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (accounts.length === 0) {
+    return (
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-gray-700">AWS Account *</label>
+        <div className="p-3 border border-yellow-300 rounded-lg bg-yellow-50">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-yellow-600" />
+            <span className="text-sm text-yellow-700">No AWS accounts available. Contact your administrator.</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm font-medium text-gray-700">
+        AWS Account *
+        <span className="ml-2 text-xs text-gray-500">({accounts.length} available)</span>
+      </label>
+      <select
+        value={selectedAccountId}
+        onChange={(e) => onAccountChange(e.target.value)}
+        disabled={disabled}
+        className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
+          disabled 
+            ? 'bg-gray-100 text-gray-500 cursor-not-allowed' 
+            : selectedAccountId 
+              ? 'border-green-300 bg-green-50' 
+              : 'border-gray-300'
+        }`}
+        required
+      >
+        <option value="">Select an AWS account...</option>
+        {accounts.map((account) => (
+          <option key={account.account_id} value={account.account_id}>
+            {account.account_name} ({account.account_number})
+          </option>
+        ))}
+      </select>
+      
+      {selectedAccountId && (
+        <div className="flex items-center text-sm text-green-600">
+          <CheckCircle className="w-4 h-4 mr-1" />
+          Account selected
+        </div>
+      )}
+      
+      <div className="text-xs text-gray-500">
+        💡 Select the AWS account where you need temporary access
+      </div>
+    </div>
+  )
+}
+
 // Request Form Component
 const RequestForm: React.FC<{
   requestForm: RequestForm
@@ -1122,25 +2065,63 @@ const RequestForm: React.FC<{
     return acc
   }, {})
 
-  const handleSubmit = () => {
-    if (!requestForm.email) {
-      addNotification("Please enter your email address", "error")
-      return
-    }
-    if (requestForm.permissions.length === 0) {
-      addNotification("Please select at least one permission", "error")
-      return
-    }
-    if (requestForm.justification.length < 10) {
-      addNotification("Justification must be at least 10 characters", "error")
-      if (justificationRef.current) {
-        justificationRef.current.focus()
-      }
-      return
-    }
-
-    submitRequest()
+const handleSubmit = () => {
+  const errors: string[] = []
+  
+  if (!requestForm.email) {
+    errors.push("Email address is required")
   }
+  
+  if (!requestForm.account_id) {
+    errors.push("Please select an AWS account")
+  }
+  
+  if (requestForm.permissions.length === 0) {
+    errors.push("Please select at least one permission")
+  } else if (requestForm.permissions.length > 5) {
+    errors.push("Maximum 5 permissions allowed per request")
+  }
+  
+  if (!requestForm.justification.trim()) {
+    errors.push("Business justification is required")
+  } else if (requestForm.justification.trim().length < 10) {
+    errors.push("Business justification must be at least 10 characters long")
+  } else if (requestForm.justification.trim().length > 1000) {
+    errors.push("Business justification cannot exceed 1000 characters")
+  }
+  
+  if (!requestForm.urgency) {
+    errors.push("Please select an urgency level")
+  }
+  
+  if (requestForm.duration_minutes < 60) {
+    errors.push("Access duration must be at least 1 hour")
+  } else if (requestForm.duration_minutes > 480) {
+    errors.push("Access duration cannot exceed 8 hours")
+  }
+  
+  // Show all errors
+  if (errors.length > 0) {
+    if (errors.length === 1) {
+      addNotification(errors[0], "error")
+    } else {
+      addNotification(`Please fix the following issues:\n• ${errors.join('\n• ')}`, "error")
+    }
+    
+    // Focus on the first problematic field
+    if (!requestForm.account_id) {
+      // Focus logic for account selector
+    } else if (requestForm.permissions.length === 0) {
+      // Focus logic for permissions
+    } else if (requestForm.justification.length < 10 && justificationRef.current) {
+      justificationRef.current.focus()
+    }
+    
+    return
+  }
+
+  submitRequest()
+}
 
   return (
     <div className="space-y-6">
@@ -1165,6 +2146,15 @@ const RequestForm: React.FC<{
             />
             <p className="text-xs text-gray-500 mt-1">Using your authenticated email address</p>
           </div>
+
+          {/*AWS ACCOUNT SELECTOR*/}
+          <AWSAccountSelector
+            selectedAccountId={requestForm.account_id}
+            onAccountChange={(accountId) => 
+              setRequestForm(prev => ({ ...prev, account_id: accountId }))
+            }
+            disabled={loading}
+          />
 
           {/* Urgency Selection */}
           <div>
@@ -1362,6 +2352,7 @@ const RequestForm: React.FC<{
                   duration_minutes: 120,
                   justification: "",
                   urgency: "normal",
+                  account_id: ""
                 })
               }
               className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
@@ -1373,6 +2364,7 @@ const RequestForm: React.FC<{
               disabled={
                 loading ||
                 !requestForm.email ||
+                !requestForm.account_id ||
                 requestForm.permissions.length === 0 ||
                 requestForm.justification.length < 10
               }
@@ -1414,6 +2406,31 @@ const MyRequests: React.FC<{
     const matchesStatus = filterStatus === "all" || request.status === filterStatus
     return matchesSearch && matchesStatus
   })
+  const exportRequests = () => {
+  const csvData = [
+    ['Request ID', 'Status', 'AWS Account', 'Permissions', 'Duration (min)', 'Urgency', 'Requested Date', 'Expires At', 'Approved By', 'Justification'].join(','),
+    ...filteredRequests.map(request => [
+      `"${request.request_id || ''}"`,
+      `"${request.status || ''}"`,
+      `"${request.aws_account ? `${request.aws_account.account_name} (${request.aws_account.account_number})` : 'N/A'}"`,
+      `"${request.permissions ? request.permissions.join('; ') : ''}"`,
+      request.duration_minutes || 0,
+      `"${request.urgency || ''}"`,
+      `"${new Date(request.requested_at).toLocaleDateString()}"`,
+      `"${request.expires_at ? new Date(request.expires_at).toLocaleDateString() : 'N/A'}"`,
+      `"${request.approved_by || 'N/A'}"`,
+      `"${(request.justification || '').replace(/"/g, '""')}"` // Escape quotes in justification
+    ].join(','))
+  ].join('\n')
+
+  const blob = new Blob([csvData], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `my-requests-${new Date().toISOString().split('T')[0]}.csv`
+  link.click()
+  URL.revokeObjectURL(url)
+}
 
   return (
     <div className="space-y-6">
@@ -1423,6 +2440,14 @@ const MyRequests: React.FC<{
           My Access Requests
         </h3>
         <div className="flex items-center space-x-3">
+          <button
+            onClick={exportRequests}
+            disabled={filteredRequests.length === 0}
+            className="flex items-center space-x-2 px-4 py-2 text-green-600 border border-green-300 rounded-lg hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export CSV</span>
+          </button>
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <input
@@ -1503,45 +2528,71 @@ const MyRequests: React.FC<{
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <div className="text-sm font-medium text-gray-900 mb-2">Permissions Requested</div>
-                    <div className="flex flex-wrap gap-2">
-                      {request.permissions?.map((perm: string) => {
-                        const permData = PERMISSIONS.find((p) => p.id === perm)
-                        return (
-                          <span
-                            key={perm}
-                            className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
-                          >
-                            {permData?.icon} {permData?.label || perm}
-                          </span>
-                        )
-                      })}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-gray-900 mb-2">Duration & Status</div>
-                    <div className="text-sm text-gray-600 space-y-1">
-                      <div className="flex items-center">
-                        <Timer className="w-4 h-4 mr-2" />
-                        {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                {/* ✅ NEW: AWS Account Column */}
+                <div>
+                  <div className="text-sm font-medium text-gray-900 mb-2">AWS Account</div>
+                  <div className="space-y-1">
+                    {request.aws_account ? (
+                      <div className="flex items-center text-sm">
+                        <div className="p-1 bg-orange-100 rounded mr-2">
+                          🏢
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-900">{request.aws_account.account_name}</div>
+                          <div className="text-xs text-gray-500">({request.aws_account.account_number})</div>
+                        </div>
                       </div>
-                      {request.status === "ACTIVE" && request.time_remaining_seconds && (
-                        <div className="flex items-center text-green-600">
-                          <Clock className="w-4 h-4 mr-2" />
-                          {formatTimeRemaining(request.time_remaining_seconds)} remaining
-                        </div>
-                      )}
-                      {request.approved_by && (
-                        <div className="flex items-center">
-                          <UserCheck className="w-4 h-4 mr-2" />
-                          Approved by {request.approved_by}
-                        </div>
-                      )}
-                    </div>
+                    ) : (
+                      <div className="flex items-center text-sm text-gray-500">
+                        <AlertTriangle className="w-4 h-4 mr-2" />
+                        Account info unavailable
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {/* Permissions Column */}
+                <div>
+                  <div className="text-sm font-medium text-gray-900 mb-2">Permissions Requested</div>
+                  <div className="flex flex-wrap gap-2">
+                    {request.permissions?.map((perm: string) => {
+                      const permData = PERMISSIONS.find((p) => p.id === perm)
+                      return (
+                        <span
+                          key={perm}
+                          className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
+                        >
+                          {permData?.icon} {permData?.label || perm}
+                        </span>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Duration & Status Column */}
+                <div>
+                  <div className="text-sm font-medium text-gray-900 mb-2">Duration & Status</div>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <div className="flex items-center">
+                      <Timer className="w-4 h-4 mr-2" />
+                      {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
+                    </div>
+                    {request.status === "ACTIVE" && request.time_remaining_seconds && (
+                      <div className="flex items-center text-green-600">
+                        <Clock className="w-4 h-4 mr-2" />
+                        {formatTimeRemaining(request.time_remaining_seconds)} remaining
+                      </div>
+                    )}
+                    {request.approved_by && (
+                      <div className="flex items-center">
+                        <UserCheck className="w-4 h-4 mr-2" />
+                        Approved by {request.approved_by}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
 
                 {request.justification && (
                   <div className="bg-gray-50 rounded-lg p-4">
@@ -1555,7 +2606,7 @@ const MyRequests: React.FC<{
                     <div className="text-sm text-green-800">
                       <strong>Active Session Details:</strong>
                       <br />
-                      User: {request.user_name} | Role: {request.role_name}
+                      User: {request.user_name}
                     </div>
                   </div>
                 )}
@@ -1578,6 +2629,7 @@ const MyRequests: React.FC<{
 
 // Approvals Component
 // Enhanced Approvals Component - Updated for Your Backend
+// Complete Approvals Component with Emergency Revoke
 const Approvals: React.FC<{
   pendingRequests: any[]
   loading: boolean
@@ -1586,16 +2638,34 @@ const Approvals: React.FC<{
   addNotification: (message: string, type: "success" | "error") => void
 }> = ({ pendingRequests, loading, loadPendingRequests, authState, addNotification }) => {
   const [processingId, setProcessingId] = useState<string | null>(null)
-  const [commentModal, setCommentModal] = useState<{ show: boolean; requestId: string | null; action: string | null }>({
+  const [commentModal, setCommentModal] = useState<{ 
+    show: boolean
+    requestId: string | null
+    action: string | null
+    requestDetails?: any
+  }>({
     show: false,
     requestId: null,
     action: null,
+    requestDetails: null
   })
   const [comment, setComment] = useState("")
   
+  // New state for revoke modal
+  const [revokeModal, setRevokeModal] = useState<{
+    show: boolean
+    requestId: string | null
+    requestDetails?: any
+  }>({
+    show: false,
+    requestId: null,
+    requestDetails: null
+  })
+  const [revokeReason, setRevokeReason] = useState("")
+  
   // New state for search and filtering
   const [searchTerm, setSearchTerm] = useState("")
-  const [filterStatus, setFilterStatus] = useState("PENDING") // Default to pending
+  const [filterStatus, setFilterStatus] = useState("PENDING")
   const [allRequests, setAllRequests] = useState<any[]>([])
   const [showAllRequests, setShowAllRequests] = useState(false)
   const [loadingAll, setLoadingAll] = useState(false)
@@ -1615,15 +2685,12 @@ const Approvals: React.FC<{
     try {
       setLoadingAll(true)
       
-      // Use your existing /check-status endpoint with show_all=true
       const allResponse = await apiCall("/check-status", { show_all: true })
 
       if (allResponse.status === "SUCCESS" && allResponse.data?.all_requests) {
-        // Your backend returns all_requests array
         setAllRequests(allResponse.data.all_requests)
         console.log(`✅ Loaded ${allResponse.data.all_requests.length} total requests`)
       } else {
-        // Fallback: manually combine different status calls if show_all doesn't work
         console.log("📋 Using fallback method to load all requests")
         const [pendingResponse, activeResponse] = await Promise.all([
           apiCall("/check-status", { show_pending: true }),
@@ -1671,6 +2738,37 @@ const Approvals: React.FC<{
   useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, filterStatus, showAllRequests])
+  
+  const exportRequests = () => {
+    const dataToExport = showAllRequests ? filteredRequests : filteredRequests.filter(r => r.status === 'PENDING')
+    const csvData = [
+      ['Request ID', 'Email', 'Status', 'AWS Account', 'Permissions', 'Duration (min)', 'Urgency', 'Requested Date', 'Expires At', 'Approved By', 'Pending Hours', 'Justification', 'Comments'].join(','),
+      ...dataToExport.map(request => [
+        `"${request.request_id || ''}"`,
+        `"${request.email || ''}"`,
+        `"${request.status || ''}"`,
+        `"${request.aws_account ? `${request.aws_account.account_name} (${request.aws_account.account_number})` : 'N/A'}"`,
+        `"${request.permissions ? request.permissions.join('; ') : ''}"`,
+        request.duration_minutes || 0,
+        `"${request.urgency || ''}"`,
+        `"${new Date(request.requested_at).toLocaleDateString()}"`,
+        `"${request.expires_at ? new Date(request.expires_at).toLocaleDateString() : 'N/A'}"`,
+        `"${request.approved_by || 'N/A'}"`,
+        request.pending_for_hours || 'N/A',
+        `"${(request.justification || '').replace(/"/g, '""')}"`,
+        `"${(request.comments || '').replace(/"/g, '""')}"` 
+      ].join(','))
+    ].join('\n')
+
+    const blob = new Blob([csvData], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    const filename = showAllRequests ? 'all-requests' : 'pending-requests'
+    link.download = `${filename}-${new Date().toISOString().split('T')[0]}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   // Generate page numbers for pagination
   const getPageNumbers = () => {
@@ -1703,6 +2801,42 @@ const Approvals: React.FC<{
     return pages
   }
 
+  // Helper function for status colors
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'PENDING':
+        return 'bg-yellow-100 text-yellow-800 border-yellow-300'
+      case 'APPROVED':
+        return 'bg-blue-100 text-blue-800 border-blue-300'
+      case 'ACTIVE':
+        return 'bg-green-100 text-green-800 border-green-300'
+      case 'DENIED':
+        return 'bg-red-100 text-red-800 border-red-300'
+      case 'REVOKED':
+        return 'bg-orange-100 text-orange-800 border-orange-300'
+      case 'EXPIRED':
+        return 'bg-gray-100 text-gray-800 border-gray-300'
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-300'
+    }
+  }
+
+  // Helper function for urgency colors
+  const getUrgencyColor = (urgency: string) => {
+    switch (urgency) {
+      case 'low':
+        return 'bg-green-100 text-green-800'
+      case 'normal':
+        return 'bg-blue-100 text-blue-800'
+      case 'high':
+        return 'bg-orange-100 text-orange-800'
+      case 'critical':
+        return 'bg-red-100 text-red-800'
+      default:
+        return 'bg-gray-100 text-gray-800'
+    }
+  }
+
   const handleApproval = async (requestId: string, action: string, comments = "") => {
     try {
       setProcessingId(requestId)
@@ -1714,7 +2848,8 @@ const Approvals: React.FC<{
       })
 
       if (response.status === "SUCCESS") {
-        addNotification(`Request ${action.toLowerCase()}d successfully`, "success")
+        const actionText = action === "APPROVED" ? "approved" : "denied"
+        addNotification(`✅ Request ${actionText} successfully`, "success")
         await loadPendingRequests()
         if (showAllRequests) {
           await loadAllRequests()
@@ -1724,17 +2859,59 @@ const Approvals: React.FC<{
       }
     } catch (error: any) {
       console.error("Error processing approval:", error)
-      addNotification(`Error: ${error.message}`, "error")
+      addNotification(`❌ Error: ${error.message}`, "error")
     } finally {
       setProcessingId(null)
-      setCommentModal({ show: false, requestId: null, action: null })
+      setCommentModal({ show: false, requestId: null, action: null, requestDetails: null })
       setComment("")
     }
   }
 
-  const openCommentModal = (requestId: string, action: string) => {
-    setCommentModal({ show: true, requestId, action })
+  // Updated function to open comment modal for both approve and deny
+  const openCommentModal = (requestId: string, action: string, requestDetails: any) => {
+    setCommentModal({ show: true, requestId, action, requestDetails })
     setComment("")
+  }
+
+  // Quick approval without comment (for urgent cases)
+  const handleQuickApproval = async (requestId: string) => {
+    await handleApproval(requestId, "APPROVED", "")
+  }
+
+  // New emergency revoke function
+  const handleRevoke = async (requestId: string, reason: string) => {
+    try {
+      setProcessingId(requestId)
+      const response = await apiCall("/emergency-revoke", {
+        request_id: requestId,
+        revoker_email: authState.user?.email,
+        revoke_reason: reason,
+        force_revoke: false
+      })
+
+      if (response.status === "SUCCESS") {
+        addNotification(`✅ Request emergency revoked successfully`, "success")
+        await loadPendingRequests()
+        if (showAllRequests) {
+          await loadAllRequests()
+        }
+      } else {
+        addNotification(response.message || "Failed to revoke request", "error")
+      }
+    } catch (error: any) {
+      console.error("Error revoking request:", error)
+      addNotification(`❌ Error: ${error.message}`, "error")
+    } finally {
+      setProcessingId(null)
+      setRevokeModal({ show: false, requestId: null, requestDetails: null })
+      setRevokeReason("")
+    }
+  }
+
+  // Open revoke modal
+  const openRevokeModal = (requestId: string, requestDetails: any) => {
+    setRevokeModal({ show: true, requestId, requestDetails })
+    setRevokeReason("")
   }
 
   return (
@@ -1772,6 +2949,16 @@ const Approvals: React.FC<{
         </div>
 
         <div className="flex items-center space-x-3">
+          {/* Export button */}
+          <button
+            onClick={exportRequests}
+            disabled={filteredRequests.length === 0}
+            className="flex items-center space-x-2 px-4 py-2 text-green-600 border border-green-300 rounded-lg hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export CSV</span>
+          </button>
+          
           {/* Search input */}
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -1929,7 +3116,29 @@ const Approvals: React.FC<{
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    {/* AWS Account Column */}
+                    <div>
+                      <div className="text-sm font-medium text-gray-900 mb-2">AWS Account</div>
+                      <div className="space-y-1">
+                        {request.aws_account ? (
+                          <div className="flex items-center text-sm">
+                            <div className="p-1 bg-orange-100 rounded mr-2">
+                              🏢
+                            </div>
+                            <div>
+                              <div className="font-medium text-gray-900">{request.aws_account.account_name}</div>
+                              <div className="text-xs text-gray-500">({request.aws_account.account_number})</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center text-sm text-gray-500">
+                            <AlertTriangle className="w-4 h-4 mr-2" />
+                            Account info unavailable
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     <div>
                       <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
                       <div className="flex flex-wrap gap-2">
@@ -1984,20 +3193,14 @@ const Approvals: React.FC<{
                     </div>
                   )}
 
-                  {/* Action buttons - only show for pending requests */}
+                  {/* Action buttons with consistent sizing */}
                   {request.status === "PENDING" && (
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+                      {/* Quick Approve */}
                       <button
-                        onClick={() => openCommentModal(request.request_id, "DENIED")}
+                        onClick={() => handleQuickApproval(request.request_id)}
                         disabled={processingId === request.request_id}
-                        className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50"
-                      >
-                        Deny
-                      </button>
-                      <button
-                        onClick={() => handleApproval(request.request_id, "APPROVED")}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2"
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
                       >
                         {processingId === request.request_id ? (
                           <>
@@ -2007,12 +3210,57 @@ const Approvals: React.FC<{
                         ) : (
                           <>
                             <CheckCircle className="w-4 h-4" />
-                            <span>Approve</span>
+                            <span>Quick Approve</span>
                           </>
                         )}
                       </button>
+
+                      {/* Approve with Comment */}
+                      <button
+                        onClick={() => openCommentModal(request.request_id, "APPROVED", request)}
+                        disabled={processingId === request.request_id}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
+                      >
+                        <FileText className="w-4 h-4" />
+                        <span>Approve with Comment</span>
+                      </button>
+
+                      {/* Deny */}
+                      <button
+                        onClick={() => openCommentModal(request.request_id, "DENIED", request)}
+                        disabled={processingId === request.request_id}
+                        className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        <span>Deny</span>
+                      </button>
                     </div>
                   )}
+
+                  {/* Emergency Revoke button for APPROVED or ACTIVE requests */}
+                  {(request.status === "APPROVED" || request.status === "ACTIVE") && (
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+                      <button
+                        onClick={() => openRevokeModal(request.request_id, request)}
+                        disabled={processingId === request.request_id}
+                        className="px-4 py-2 text-orange-600 border border-orange-300 rounded-lg hover:bg-orange-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[140px] justify-center"
+                      >
+                        <AlertTriangle className="w-4 h-4" />
+                        <span>Emergency Revoke</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Info for completed requests */}
+                  {/* {(request.status === "DENIED" || request.status === "REVOKED" || request.status === "EXPIRED") && (
+                    <div className="pt-4 border-t border-gray-100">
+                      <div className="text-sm text-gray-500 text-center">
+                        {request.status === "DENIED" && "Request was denied by administrator"}
+                        {request.status === "REVOKED" && "Access was emergency revoked by administrator"}
+                        {request.status === "EXPIRED" && "Access expired automatically"}
+                      </div>
+                    </div>
+                  )} */}
                 </div>
               </div>
             ))}
@@ -2022,16 +3270,13 @@ const Approvals: React.FC<{
           {totalPages > 1 && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
               <div className="flex items-center justify-between">
-                {/* Page info */}
                 <div className="text-sm text-gray-700">
                   Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
                   <span className="font-medium">{Math.min(endIndex, totalItems)}</span> of{' '}
                   <span className="font-medium">{totalItems}</span> results
                 </div>
 
-                {/* Pagination buttons */}
                 <div className="flex items-center space-x-2">
-                  {/* Previous button */}
                   <button
                     onClick={() => setCurrentPage(currentPage - 1)}
                     disabled={currentPage === 1}
@@ -2040,7 +3285,6 @@ const Approvals: React.FC<{
                     Previous
                   </button>
 
-                  {/* Page numbers */}
                   <div className="flex items-center space-x-1">
                     {getPageNumbers().map((page, index) => (
                       <button
@@ -2060,7 +3304,6 @@ const Approvals: React.FC<{
                     ))}
                   </div>
 
-                  {/* Next button */}
                   <button
                     onClick={() => setCurrentPage(currentPage + 1)}
                     disabled={currentPage === totalPages}
@@ -2098,30 +3341,55 @@ const Approvals: React.FC<{
         </>
       )}
 
-      {/* Comment Modal */}
+      {/* Comment Modal - Enhanced for both approve and deny */}
       {commentModal.show && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              {commentModal.action === "DENIED" ? "Deny Request" : "Approve Request"}
-            </h3>
+            <div className="flex items-center mb-4">
+              {commentModal.action === "DENIED" ? (
+                <XCircle className="w-6 h-6 text-red-500 mr-3" />
+              ) : (
+                <CheckCircle className="w-6 h-6 text-green-500 mr-3" />
+              )}
+              <h3 className="text-lg font-semibold text-gray-900">
+                {commentModal.action === "DENIED" ? "Deny Request" : "Approve Request"}
+              </h3>
+            </div>
+
+            {/* Request details summary */}
+            {commentModal.requestDetails && (
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                <div className="text-sm">
+                  <div><strong>Requester:</strong> {commentModal.requestDetails.email}</div>
+                  <div><strong>Duration:</strong> {commentModal.requestDetails.duration_minutes} minutes</div>
+                  <div><strong>Urgency:</strong> {commentModal.requestDetails.urgency?.toUpperCase()}</div>
+                </div>
+              </div>
+            )}
+
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                {commentModal.action === "DENIED" ? "Reason for denial:" : "Comments (optional):"}
+                {commentModal.action === "DENIED" ? "Reason for denial: *" : "Comments (optional):"}
               </label>
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 placeholder={
-                  commentModal.action === "DENIED" ? "Please provide a reason for denial..." : "Add any comments..."
+                  commentModal.action === "DENIED" 
+                    ? "Please provide a clear reason for denial..." 
+                    : "Add any approval comments or conditions..."
                 }
                 rows={3}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
+              {commentModal.action === "DENIED" && (
+                <p className="text-xs text-red-600 mt-1">* Required for denials</p>
+              )}
             </div>
+
             <div className="flex items-center justify-end space-x-3">
               <button
-                onClick={() => setCommentModal({ show: false, requestId: null, action: null })}
+                onClick={() => setCommentModal({ show: false, requestId: null, action: null, requestDetails: null })}
                 className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
               >
                 Cancel
@@ -2133,13 +3401,102 @@ const Approvals: React.FC<{
                   handleApproval(commentModal.requestId, commentModal.action, comment)
                 }
                 disabled={commentModal.action === "DENIED" && !comment.trim()}
-                className={`px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 ${
+                className={`px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center space-x-2 ${
                   commentModal.action === "DENIED"
                     ? "bg-red-600 text-white hover:bg-red-700"
                     : "bg-green-600 text-white hover:bg-green-700"
                 }`}
               >
-                {commentModal.action === "DENIED" ? "Deny Request" : "Approve Request"}
+                {commentModal.action === "DENIED" ? (
+                  <>
+                    <XCircle className="w-4 h-4" />
+                    <span>Deny Request</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Approve Request</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Emergency Revoke Modal */}
+      {revokeModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center mb-4">
+              <AlertTriangle className="w-6 h-6 text-orange-500 mr-3" />
+              <h3 className="text-lg font-semibold text-gray-900">Emergency Revoke Access</h3>
+            </div>
+
+            {/* Request details summary */}
+            {revokeModal.requestDetails && (
+              <div className="mb-4 p-3 bg-orange-50 rounded-lg border border-orange-200">
+                <div className="text-sm">
+                  <div><strong>User:</strong> {revokeModal.requestDetails.email}</div>
+                  <div><strong>Status:</strong> {revokeModal.requestDetails.status}</div>
+                  <div><strong>AWS Account:</strong> {revokeModal.requestDetails.aws_account?.account_name}</div>
+                  {revokeModal.requestDetails.status === "ACTIVE" && revokeModal.requestDetails.time_remaining_seconds && (
+                    <div><strong>Time Remaining:</strong> {formatTimeRemaining(revokeModal.requestDetails.time_remaining_seconds)}</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-4 p-3 bg-red-50 rounded-lg border border-red-200">
+              <div className="flex items-start">
+                <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 mr-2 flex-shrink-0" />
+                <div className="text-sm text-red-800">
+                  <strong>Warning:</strong> This will immediately revoke all active permissions for this request. 
+                  The user will lose access instantly and be notified of the revocation.
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Reason for emergency revocation: *
+              </label>
+              <textarea
+                value={revokeReason}
+                onChange={(e) => setRevokeReason(e.target.value)}
+                placeholder="Explain why this access needs to be revoked immediately (e.g., security incident, policy violation, user departure, etc.)"
+                rows={3}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              />
+              <p className="text-xs text-gray-600 mt-1">This reason will be logged and sent to the user</p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3">
+              <button
+                onClick={() => setRevokeModal({ show: false, requestId: null, requestDetails: null })}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() =>
+                  revokeModal.requestId &&
+                  handleRevoke(revokeModal.requestId, revokeReason)
+                }
+                disabled={!revokeReason.trim() || processingId === revokeModal.requestId}
+                className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2"
+              >
+                {processingId === revokeModal.requestId ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Revoking...</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Emergency Revoke</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -2148,226 +3505,6 @@ const Approvals: React.FC<{
     </div>
   )
 }
-
-
-
-// // Approvals Component
-// const Approvals: React.FC<{
-//   pendingRequests: any[]
-//   loading: boolean
-//   loadPendingRequests: () => void
-//   authState: AuthState
-//   addNotification: (message: string, type: "success" | "error") => void
-// }> = ({ pendingRequests, loading, loadPendingRequests, authState, addNotification }) => {
-//   const [processingId, setProcessingId] = useState<string | null>(null)
-//   const [commentModal, setCommentModal] = useState<{ show: boolean; requestId: string | null; action: string | null }>({
-//     show: false,
-//     requestId: null,
-//     action: null,
-//   })
-//   const [comment, setComment] = useState("")
-
-//   const handleApproval = async (requestId: string, action: string, comments = "") => {
-//     try {
-//       setProcessingId(requestId)
-//       const response = await apiCall("/approve", {
-//         request_id: requestId,
-//         action: action,
-//         approver_email: authState.user?.email,
-//         comments: comments,
-//       })
-
-//       if (response.status === "SUCCESS") {
-//         addNotification(`Request ${action.toLowerCase()}d successfully`, "success")
-//         await loadPendingRequests()
-//       } else {
-//         addNotification(response.message || "Failed to process request", "error")
-//       }
-//     } catch (error: any) {
-//       console.error("Error processing approval:", error)
-//       addNotification(`Error: ${error.message}`, "error")
-//     } finally {
-//       setProcessingId(null)
-//       setCommentModal({ show: false, requestId: null, action: null })
-//       setComment("")
-//     }
-//   }
-
-//   const openCommentModal = (requestId: string, action: string) => {
-//     setCommentModal({ show: true, requestId, action })
-//     setComment("")
-//   }
-
-//   return (
-//     <div className="space-y-6">
-//       <div className="flex items-center justify-between">
-//         <h3 className="text-xl font-semibold text-gray-900 flex items-center">
-//           <Clock className="w-6 h-6 mr-3 text-blue-600" />
-//           Pending Approvals
-//         </h3>
-//         <button
-//           onClick={loadPendingRequests}
-//           disabled={loading}
-//           className="text-blue-600 hover:text-blue-800 flex items-center text-sm font-medium px-3 py-2 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
-//         >
-//           <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
-//           Refresh
-//         </button>
-//       </div>
-
-//       {pendingRequests.length === 0 ? (
-//         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
-//           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-//             <Clock className="w-8 h-8 text-gray-400" />
-//           </div>
-//           <div className="text-gray-500 text-lg mb-2">No pending requests</div>
-//           <div className="text-gray-400 text-sm">All requests have been processed</div>
-//         </div>
-//       ) : (
-//         <div className="space-y-4">
-//           {pendingRequests.map((request) => (
-//             <div
-//               key={request.request_id}
-//               className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
-//             >
-//               <div className="p-6">
-//                 <div className="flex items-start justify-between mb-4">
-//                   <div className="flex items-center space-x-3">
-//                     <span
-//                       className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(request.status)}`}
-//                     >
-//                       {request.status}
-//                     </span>
-//                     {request.urgency && (
-//                       <span
-//                         className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(request.urgency)}`}
-//                       >
-//                         {request.urgency.toUpperCase()}
-//                       </span>
-//                     )}
-//                     <span className="text-xs text-gray-500">
-//                       Requested by: <strong>{request.email}</strong>
-//                     </span>
-//                   </div>
-//                   <div className="text-xs text-gray-500">
-//                     {request.pending_for_hours && `Pending for ${request.pending_for_hours}h`}
-//                   </div>
-//                 </div>
-
-//                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-//                   <div>
-//                     <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
-//                     <div className="flex flex-wrap gap-2">
-//                       {request.permissions?.map((perm: string) => {
-//                         const permData = PERMISSIONS.find((p) => p.id === perm)
-//                         return (
-//                           <span
-//                             key={perm}
-//                             className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
-//                           >
-//                             {permData?.icon} {permData?.label || perm}
-//                           </span>
-//                         )
-//                       })}
-//                     </div>
-//                   </div>
-//                   <div>
-//                     <div className="text-sm font-medium text-gray-900 mb-2">Duration</div>
-//                     <div className="text-sm text-gray-600">
-//                       {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
-//                     </div>
-//                   </div>
-//                 </div>
-
-//                 {request.justification && (
-//                   <div className="bg-gray-50 rounded-lg p-4 mb-4">
-//                     <div className="text-sm font-medium text-gray-900 mb-1">Business Justification</div>
-//                     <div className="text-sm text-gray-700">{request.justification}</div>
-//                   </div>
-//                 )}
-
-//                 <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
-//                   <button
-//                     onClick={() => openCommentModal(request.request_id, "DENIED")}
-//                     disabled={processingId === request.request_id}
-//                     className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50"
-//                   >
-//                     Deny
-//                   </button>
-//                   <button
-//                     onClick={() => handleApproval(request.request_id, "APPROVED")}
-//                     disabled={processingId === request.request_id}
-//                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2"
-//                   >
-//                     {processingId === request.request_id ? (
-//                       <>
-//                         <RefreshCw className="w-4 h-4 animate-spin" />
-//                         <span>Processing...</span>
-//                       </>
-//                     ) : (
-//                       <>
-//                         <CheckCircle className="w-4 h-4" />
-//                         <span>Approve</span>
-//                       </>
-//                     )}
-//                   </button>
-//                 </div>
-//               </div>
-//             </div>
-//           ))}
-//         </div>
-//       )}
-
-//       {/* Comment Modal */}
-//       {commentModal.show && (
-//         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-//           <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
-//             <h3 className="text-lg font-semibold text-gray-900 mb-4">
-//               {commentModal.action === "DENIED" ? "Deny Request" : "Approve Request"}
-//             </h3>
-//             <div className="mb-4">
-//               <label className="block text-sm font-medium text-gray-700 mb-2">
-//                 {commentModal.action === "DENIED" ? "Reason for denial:" : "Comments (optional):"}
-//               </label>
-//               <textarea
-//                 value={comment}
-//                 onChange={(e) => setComment(e.target.value)}
-//                 placeholder={
-//                   commentModal.action === "DENIED" ? "Please provide a reason for denial..." : "Add any comments..."
-//                 }
-//                 rows={3}
-//                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-//               />
-//             </div>
-//             <div className="flex items-center justify-end space-x-3">
-//               <button
-//                 onClick={() => setCommentModal({ show: false, requestId: null, action: null })}
-//                 className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
-//               >
-//                 Cancel
-//               </button>
-//               <button
-//                 onClick={() =>
-//                   commentModal.requestId &&
-//                   commentModal.action &&
-//                   handleApproval(commentModal.requestId, commentModal.action, comment)
-//                 }
-//                 disabled={commentModal.action === "DENIED" && !comment.trim()}
-//                 className={`px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 ${
-//                   commentModal.action === "DENIED"
-//                     ? "bg-red-600 text-white hover:bg-red-700"
-//                     : "bg-green-600 text-white hover:bg-green-700"
-//                 }`}
-//               >
-//                 {commentModal.action === "DENIED" ? "Deny Request" : "Approve Request"}
-//               </button>
-//             </div>
-//           </div>
-//         </div>
-//       )}
-//     </div>
-//   )
-// }
 
 // Simple Dashboard Component
 const Dashboard: React.FC<{ statusData: StatusData; authState: AuthState; connectionStatus: ConnectionStatus }> = ({
@@ -2648,13 +3785,14 @@ const TEAMSystem: React.FC = () => {
   })
 
   // Request Form State
-  const [requestForm, setRequestForm] = useState<RequestForm>({
-    email: "",
-    permissions: [],
-    duration_minutes: 120,
-    justification: "",
-    urgency: "normal",
-  })
+const [requestForm, setRequestForm] = useState<RequestForm>({
+  email: "",
+  permissions: [],
+  duration_minutes: 120,
+  justification: "",
+  urgency: "normal",
+  account_id: ""
+})
 
   // Status Data
   const [statusData, setStatusData] = useState<StatusData>({
@@ -2925,6 +4063,7 @@ const TEAMSystem: React.FC = () => {
         duration_minutes: requestForm.duration_minutes,
         justification: requestForm.justification,
         urgency: requestForm.urgency,
+        account_id: requestForm.account_id
       })
 
       if (response.status === "SUCCESS") {
@@ -2935,6 +4074,7 @@ const TEAMSystem: React.FC = () => {
           duration_minutes: 120,
           justification: "",
           urgency: "normal",
+          account_id: ""
         })
         await loadUserRequests()
         await loadStatusData()
@@ -3007,6 +4147,8 @@ const TEAMSystem: React.FC = () => {
           )
         case "invitations":
           return <UserInvitations addNotification={addNotification} />
+        case "aws-accounts":  // ← ADD THIS CASE
+          return <AWSAccountsManagement addNotification={addNotification} />
         default:
           return <Dashboard statusData={statusData} authState={authState} connectionStatus={connectionStatus} />
       }
