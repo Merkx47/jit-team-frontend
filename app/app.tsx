@@ -2880,6 +2880,10 @@ const Approvals: React.FC<{
 
   // New emergency revoke function
   const handleRevoke = async (requestId: string, reason: string) => {
+      if (reason.trim().length < 10) {
+    addNotification("❌ Revocation reason must be at least 10 characters", "error")
+    return
+  }
     try {
       setProcessingId(requestId)
       const response = await apiCall("/emergency-revoke", {
@@ -3483,7 +3487,8 @@ const Approvals: React.FC<{
                   revokeModal.requestId &&
                   handleRevoke(revokeModal.requestId, revokeReason)
                 }
-                disabled={!revokeReason.trim() || processingId === revokeModal.requestId}
+                disabled={!revokeReason.trim() || revokeReason.trim().length < 10 || processingId === revokeModal.requestId}
+                // disabled={!revokeReason.trim() || processingId === revokeModal.requestId}
                 className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2"
               >
                 {processingId === revokeModal.requestId ? (
