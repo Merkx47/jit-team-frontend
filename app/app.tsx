@@ -233,33 +233,47 @@ const apiCall = async (endpoint: string, data: any = null, method = "POST", requ
 
 // Helper function for user-friendly error messages
 const getFriendlyErrorMessage = (status: number, errorData: any, endpoint: string): string => {
-  const originalMessage = errorData.message || errorData.detail || ""
+  // Properly extract the message from nested error structures
+  let originalMessage = ""
   
+  if (typeof errorData === "string") {
+    originalMessage = errorData
+  } else if (errorData?.detail?.message) {
+    // Handle nested structure like {"detail":{"message":"Status check failed"}}
+    originalMessage = errorData.detail.message
+  } else if (errorData?.message) {
+    originalMessage = errorData.message
+  } else if (typeof errorData?.detail === "string") {
+    originalMessage = errorData.detail
+  } else {
+    originalMessage = ""
+  }
+ 
   // Handle specific error cases with user-friendly messages
   if (originalMessage.includes("User with this email already exists")) {
     return "This email address already has an account. Please use the login form instead."
   }
-  
+ 
   if (originalMessage.includes("Invalid email or password") || originalMessage.includes("Invalid credentials")) {
     return "The email or password you entered is incorrect. Please check your credentials and try again."
   }
-  
+ 
   if (originalMessage.includes("User not found")) {
     return "No account found with this email address. Please check the email or contact your administrator for an invitation."
   }
-  
+ 
   if (originalMessage.includes("Account is disabled") || originalMessage.includes("not active")) {
     return "Your account has been disabled. Please contact your administrator for assistance."
   }
-  
+ 
   if (originalMessage.includes("Admin access required") || originalMessage.includes("permission")) {
     return "You don't have permission to perform this action. Contact your administrator if you believe this is an error."
   }
-  
+ 
   if (originalMessage.includes("Invalid signup token") || originalMessage.includes("expired")) {
     return "This invitation link has expired or is invalid. Please request a new invitation from your administrator."
   }
-  
+ 
   if (originalMessage.includes("AWS account")) {
     if (originalMessage.includes("not found")) {
       return "The selected AWS account is no longer available. Please choose a different account."
@@ -268,23 +282,28 @@ const getFriendlyErrorMessage = (status: number, errorData: any, endpoint: strin
       return "The selected AWS account is currently inactive. Please choose a different account."
     }
   }
-  
+ 
   if (originalMessage.includes("Account number must be exactly 12 digits")) {
     return "AWS account number must be exactly 12 digits. Please check the account number and try again."
   }
-  
+ 
   if (originalMessage.includes("already exists") && endpoint.includes("aws-accounts")) {
     return "An AWS account with this number already exists in the system."
   }
-  
+ 
   if (originalMessage.includes("rate limit") || originalMessage.includes("too many")) {
     return "Too many requests. Please wait a few minutes before trying again."
   }
-  
+ 
   if (originalMessage.includes("validation") || originalMessage.includes("invalid data")) {
     return "Please check your information and make sure all required fields are filled out correctly."
   }
-  
+
+  // Handle the specific "Status check failed" error
+  if (originalMessage.includes("Status check failed")) {
+    return "Unable to load request status. Please refresh the page or try again in a moment."
+  }
+ 
   // Status code based messages
   switch (status) {
     case 400:
@@ -2627,9 +2646,7 @@ const MyRequests: React.FC<{
   )
 }
 
-// Approvals Component
-// Enhanced Approvals Component - Updated for Your Backend
-// Complete Approvals Component with Emergency Revoke
+// Approval Component
 const Approvals: React.FC<{
   pendingRequests: any[]
   loading: boolean
@@ -2681,6 +2698,15 @@ const Approvals: React.FC<{
     }
   }, [showAllRequests])
 
+  // Handle filter status when toggling between modes
+  useEffect(() => {
+    if (showAllRequests) {
+      setFilterStatus("ALL")
+    } else {
+      setFilterStatus("PENDING")
+    }
+  }, [showAllRequests])
+
   const loadAllRequests = async () => {
     try {
       setLoadingAll(true)
@@ -2722,7 +2748,11 @@ const Approvals: React.FC<{
       request.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       request.permissions?.some((p: string) => p.toLowerCase().includes(searchTerm.toLowerCase()))
     
-    const matchesStatus = filterStatus === "ALL" || request.status === filterStatus
+    // Only apply status filtering when in "All Requests" mode
+    // In "Pending Only" mode, pendingRequests is already pre-filtered
+    const matchesStatus = showAllRequests 
+      ? (filterStatus === "ALL" || request.status === filterStatus)
+      : true // Skip status filtering for pending-only mode
     
     return matchesSearch && matchesStatus
   })
@@ -2935,7 +2965,7 @@ const Approvals: React.FC<{
             </span>
             <button
               onClick={() => setShowAllRequests(!showAllRequests)}
-              disabled={loadingAll}
+              // disabled={loadingAll}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
                 showAllRequests ? 'bg-blue-600' : 'bg-gray-300'
               }`}
@@ -3088,186 +3118,194 @@ const Approvals: React.FC<{
       ) : (
         <>
           <div className="space-y-4">
-            {paginatedRequests.map((request) => (
-              <div
-                key={request.request_id}
-                className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
-              >
-                <div className="p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center space-x-3">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(request.status)}`}
-                      >
-                        {request.status}
-                      </span>
-                      {request.urgency && (
+            {paginatedRequests.map((request) => {
+              // Force status to PENDING for pending-only mode
+              const displayRequest = showAllRequests 
+                ? request 
+                : { ...request, status: 'PENDING' }
+                
+              return (
+                <div
+                  key={request.request_id}
+                  className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
+                >
+                  <div className="p-6">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center space-x-3">
                         <span
-                          className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(request.urgency)}`}
+                          className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(displayRequest.status)}`}
                         >
-                          {request.urgency.toUpperCase()}
+                          {displayRequest.status}
                         </span>
-                      )}
-                      <span className="text-xs text-gray-500">
-                        Requested by: <strong>{request.email}</strong>
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-500 text-right">
-                      <div>{new Date(request.requested_at).toLocaleDateString()}</div>
-                      {request.pending_for_hours && (
-                        <div className="text-orange-600">Pending {request.pending_for_hours}h</div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                    {/* AWS Account Column */}
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 mb-2">AWS Account</div>
-                      <div className="space-y-1">
-                        {request.aws_account ? (
-                          <div className="flex items-center text-sm">
-                            <div className="p-1 bg-orange-100 rounded mr-2">
-                              🏢
-                            </div>
-                            <div>
-                              <div className="font-medium text-gray-900">{request.aws_account.account_name}</div>
-                              <div className="text-xs text-gray-500">({request.aws_account.account_number})</div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-center text-sm text-gray-500">
-                            <AlertTriangle className="w-4 h-4 mr-2" />
-                            Account info unavailable
-                          </div>
+                        {request.urgency && (
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(request.urgency)}`}
+                          >
+                            {request.urgency.toUpperCase()}
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-500">
+                          Requested by: <strong>{request.email}</strong>
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500 text-right">
+                        <div>{new Date(request.requested_at).toLocaleDateString()}</div>
+                        {request.pending_for_hours && (
+                          <div className="text-orange-600">Pending {request.pending_for_hours}h</div>
                         )}
                       </div>
                     </div>
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
-                      <div className="flex flex-wrap gap-2">
-                        {request.permissions?.map((perm: string) => {
-                          const permData = PERMISSIONS.find((p) => p.id === perm)
-                          return (
-                            <span
-                              key={perm}
-                              className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
-                            >
-                              {permData?.icon} {permData?.label || perm}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 mb-2">Duration & Details</div>
-                      <div className="text-sm text-gray-600 space-y-1">
-                        <div className="flex items-center">
-                          <Timer className="w-4 h-4 mr-2" />
-                          {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                      {/* AWS Account Column */}
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 mb-2">AWS Account</div>
+                        <div className="space-y-1">
+                          {request.aws_account ? (
+                            <div className="flex items-center text-sm">
+                              <div className="p-1 bg-orange-100 rounded mr-2">
+                                🏢
+                              </div>
+                              <div>
+                                <div className="font-medium text-gray-900">{request.aws_account.account_name}</div>
+                                <div className="text-xs text-gray-500">({request.aws_account.account_number})</div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center text-sm text-gray-500">
+                              <AlertTriangle className="w-4 h-4 mr-2" />
+                              Account info unavailable
+                            </div>
+                          )}
                         </div>
-                        {request.approved_by && (
-                          <div className="flex items-center text-green-600">
-                            <UserCheck className="w-4 h-4 mr-2" />
-                            Approved by {request.approved_by}
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
+                        <div className="flex flex-wrap gap-2">
+                          {request.permissions?.map((perm: string) => {
+                            const permData = PERMISSIONS.find((p) => p.id === perm)
+                            return (
+                              <span
+                                key={perm}
+                                className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
+                              >
+                                {permData?.icon} {permData?.label || perm}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 mb-2">Duration & Details</div>
+                        <div className="text-sm text-gray-600 space-y-1">
+                          <div className="flex items-center">
+                            <Timer className="w-4 h-4 mr-2" />
+                            {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
                           </div>
-                        )}
-                        {request.status === "ACTIVE" && request.time_remaining_seconds && (
-                          <div className="flex items-center text-green-600">
-                            <Clock className="w-4 h-4 mr-2" />
-                            {formatTimeRemaining(request.time_remaining_seconds)} remaining
-                          </div>
-                        )}
+                          {request.approved_by && (
+                            <div className="flex items-center text-green-600">
+                              <UserCheck className="w-4 h-4 mr-2" />
+                              Approved by {request.approved_by}
+                            </div>
+                          )}
+                          {request.status === "ACTIVE" && request.time_remaining_seconds && (
+                            <div className="flex items-center text-green-600">
+                              <Clock className="w-4 h-4 mr-2" />
+                              {formatTimeRemaining(request.time_remaining_seconds)} remaining
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
+
+                    {request.justification && (
+                      <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                        <div className="text-sm font-medium text-gray-900 mb-1">Business Justification</div>
+                        <div className="text-sm text-gray-700">{request.justification}</div>
+                      </div>
+                    )}
+
+                    {request.comments && (
+                      <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                        <div className="text-sm text-yellow-800">
+                          <strong>Admin Comments:</strong> {request.comments}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action buttons with consistent sizing */}
+                    {(request.status === "PENDING" || !showAllRequests) && (
+                      <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+                        {/* Quick Approve */}
+                        <button
+                          onClick={() => handleQuickApproval(request.request_id)}
+                          disabled={processingId === request.request_id}
+                          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
+                        >
+                          {processingId === request.request_id ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>Processing...</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="w-4 h-4" />
+                              <span>Quick Approve</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* Approve with Comment */}
+                        <button
+                          onClick={() => openCommentModal(request.request_id, "APPROVED", request)}
+                          disabled={processingId === request.request_id}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
+                        >
+                          <FileText className="w-4 h-4" />
+                          <span>Approve with Comment</span>
+                        </button>
+
+                        {/* Deny */}
+                        <button
+                          onClick={() => openCommentModal(request.request_id, "DENIED", request)}
+                          disabled={processingId === request.request_id}
+                          className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>Deny</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Emergency Revoke button for APPROVED or ACTIVE requests */}
+                    {(request.status === "APPROVED" || request.status === "ACTIVE") && (
+                      <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+                        <button
+                          onClick={() => openRevokeModal(request.request_id, request)}
+                          disabled={processingId === request.request_id}
+                          className="px-4 py-2 text-orange-600 border border-orange-300 rounded-lg hover:bg-orange-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[140px] justify-center"
+                        >
+                          <AlertTriangle className="w-4 h-4" />
+                          <span>Emergency Revoke</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Info for completed requests */}
+                    {(request.status === "DENIED" || request.status === "REVOKED" || request.status === "EXPIRED") && (
+                      <div className="pt-4 border-t border-gray-100">
+                        <div className="text-sm text-gray-500 text-center">
+                          {request.status === "DENIED" && "Request was denied by administrator"}
+                          {request.status === "REVOKED" && request.emergency_revoked && "Access was emergency revoked by administrator"}
+                          {request.status === "REVOKED" && !request.emergency_revoked && "Access was revoked on expiry"}
+                          {request.status === "EXPIRED" && "Access was revoked on expiry"}
+                        </div>
+                      </div>
+                    )}
                   </div>
-
-                  {request.justification && (
-                    <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                      <div className="text-sm font-medium text-gray-900 mb-1">Business Justification</div>
-                      <div className="text-sm text-gray-700">{request.justification}</div>
-                    </div>
-                  )}
-
-                  {request.comments && (
-                    <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                      <div className="text-sm text-yellow-800">
-                        <strong>Admin Comments:</strong> {request.comments}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Action buttons with consistent sizing */}
-                  {request.status === "PENDING" && (
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
-                      {/* Quick Approve */}
-                      <button
-                        onClick={() => handleQuickApproval(request.request_id)}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
-                      >
-                        {processingId === request.request_id ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            <span>Processing...</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle className="w-4 h-4" />
-                            <span>Quick Approve</span>
-                          </>
-                        )}
-                      </button>
-
-                      {/* Approve with Comment */}
-                      <button
-                        onClick={() => openCommentModal(request.request_id, "APPROVED", request)}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
-                      >
-                        <FileText className="w-4 h-4" />
-                        <span>Approve with Comment</span>
-                      </button>
-
-                      {/* Deny */}
-                      <button
-                        onClick={() => openCommentModal(request.request_id, "DENIED", request)}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
-                      >
-                        <XCircle className="w-4 h-4" />
-                        <span>Deny</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Emergency Revoke button for APPROVED or ACTIVE requests */}
-                  {(request.status === "APPROVED" || request.status === "ACTIVE") && (
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
-                      <button
-                        onClick={() => openRevokeModal(request.request_id, request)}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 text-orange-600 border border-orange-300 rounded-lg hover:bg-orange-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[140px] justify-center"
-                      >
-                        <AlertTriangle className="w-4 h-4" />
-                        <span>Emergency Revoke</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Info for completed requests */}
-                  {/* {(request.status === "DENIED" || request.status === "REVOKED" || request.status === "EXPIRED") && (
-                    <div className="pt-4 border-t border-gray-100">
-                      <div className="text-sm text-gray-500 text-center">
-                        {request.status === "DENIED" && "Request was denied by administrator"}
-                        {request.status === "REVOKED" && "Access was emergency revoked by administrator"}
-                        {request.status === "EXPIRED" && "Access expired automatically"}
-                      </div>
-                    </div>
-                  )} */}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* Pagination Controls */}
