@@ -1,6 +1,8 @@
 "use client"
 
 import type React from "react"
+import Papa from 'papaparse'
+import * as XLSX from 'xlsx'
 import { useState, useEffect, useRef } from "react"
 import {
   Shield,
@@ -80,7 +82,7 @@ interface LoginForm {
   email: string
   password: string
 }
-
+// 
 interface RequestForm {
   email: string
   permissions: string[]
@@ -158,6 +160,17 @@ const apiCall = async (endpoint: string, data: any = null, method = "POST", requ
       headers: { ...API_CONFIG.HEADERS },
     }
 
+    // ✅ CRITICAL FIX: Handle FormData differently
+    const isFormData = data instanceof FormData
+
+    // If it's FormData, don't set Content-Type (let browser handle it)
+    if (isFormData) {
+      // Remove Content-Type from headers for FormData
+      const { 'Content-Type': _, ...headersWithoutContentType } = config.headers as any
+      config.headers = headersWithoutContentType
+      console.log(`📁 FormData detected - removed Content-Type header`)
+    }
+
     // Add authentication header if required and token exists
     if (requireAuth) {
       const token = getAuthToken()
@@ -170,7 +183,14 @@ const apiCall = async (endpoint: string, data: any = null, method = "POST", requ
     }
 
     if (data && (method === "POST" || method === "PUT")) {
-      config.body = JSON.stringify(data)
+      // ✅ CRITICAL FIX: Don't JSON.stringify FormData
+      if (isFormData) {
+        config.body = data  // Pass FormData directly
+        console.log(`📁 Using FormData as body`)
+      } else {
+        config.body = JSON.stringify(data)  // JSON.stringify for regular data
+        console.log(`📄 Using JSON as body`)
+      }
     }
 
     const controller = new AbortController()
@@ -231,35 +251,50 @@ const apiCall = async (endpoint: string, data: any = null, method = "POST", requ
   }
 }
 
+
 // Helper function for user-friendly error messages
 const getFriendlyErrorMessage = (status: number, errorData: any, endpoint: string): string => {
-  const originalMessage = errorData.message || errorData.detail || ""
+  // Properly extract the message from nested error structures
+  let originalMessage = ""
   
+  if (typeof errorData === "string") {
+    originalMessage = errorData
+  } else if (errorData?.detail?.message) {
+    // Handle nested structure like {"detail":{"message":"Status check failed"}}
+    originalMessage = errorData.detail.message
+  } else if (errorData?.message) {
+    originalMessage = errorData.message
+  } else if (typeof errorData?.detail === "string") {
+    originalMessage = errorData.detail
+  } else {
+    originalMessage = ""
+  }
+ 
   // Handle specific error cases with user-friendly messages
   if (originalMessage.includes("User with this email already exists")) {
     return "This email address already has an account. Please use the login form instead."
   }
-  
+ 
   if (originalMessage.includes("Invalid email or password") || originalMessage.includes("Invalid credentials")) {
     return "The email or password you entered is incorrect. Please check your credentials and try again."
   }
-  
+ 
   if (originalMessage.includes("User not found")) {
     return "No account found with this email address. Please check the email or contact your administrator for an invitation."
   }
-  
+ 
   if (originalMessage.includes("Account is disabled") || originalMessage.includes("not active")) {
     return "Your account has been disabled. Please contact your administrator for assistance."
   }
-  
+ 
   if (originalMessage.includes("Admin access required") || originalMessage.includes("permission")) {
     return "You don't have permission to perform this action. Contact your administrator if you believe this is an error."
   }
-  
+ 
   if (originalMessage.includes("Invalid signup token") || originalMessage.includes("expired")) {
     return "This invitation link has expired or is invalid. Please request a new invitation from your administrator."
   }
-  
+ 
   if (originalMessage.includes("AWS account")) {
     if (originalMessage.includes("not found")) {
       return "The selected AWS account is no longer available. Please choose a different account."
@@ -268,23 +303,28 @@ const getFriendlyErrorMessage = (status: number, errorData: any, endpoint: strin
       return "The selected AWS account is currently inactive. Please choose a different account."
     }
   }
-  
+ 
   if (originalMessage.includes("Account number must be exactly 12 digits")) {
     return "AWS account number must be exactly 12 digits. Please check the account number and try again."
   }
-  
+ 
   if (originalMessage.includes("already exists") && endpoint.includes("aws-accounts")) {
     return "An AWS account with this number already exists in the system."
   }
-  
+ 
   if (originalMessage.includes("rate limit") || originalMessage.includes("too many")) {
     return "Too many requests. Please wait a few minutes before trying again."
   }
-  
+ 
   if (originalMessage.includes("validation") || originalMessage.includes("invalid data")) {
     return "Please check your information and make sure all required fields are filled out correctly."
   }
-  
+
+  // Handle the specific "Status check failed" error
+  if (originalMessage.includes("Status check failed")) {
+    return "Unable to load request status. Please refresh the page or try again in a moment."
+  }
+ 
   // Status code based messages
   switch (status) {
     case 400:
@@ -1131,15 +1171,34 @@ const Notifications: React.FC<{ notifications: Notification[] }> = ({ notificati
   </div>
 )
 
-// User Invitations Component
+
+
+// Enhanced User Invitations Component with CSV-Only Bulk Upload Support
 const UserInvitations: React.FC<{
   addNotification: (message: string, type: "success" | "error") => void
 }> = ({ addNotification }) => {
+  // Existing single invitation state
   const [inviteEmail, setInviteEmail] = useState("")
   const [inviteRole, setInviteRole] = useState("user")
   const [loading, setLoading] = useState(false)
   const [generatedLink, setGeneratedLink] = useState("")
   const [errors, setErrors] = useState<{[key: string]: string}>({})
+
+  // Bulk upload state
+  const [showBulkUpload, setShowBulkUpload] = useState(false)
+  const [bulkFile, setBulkFile] = useState<File | null>(null)
+  const [bulkLoading, setBulkLoading] = useState(false)
+  const [bulkResults, setBulkResults] = useState<any>(null)
+  const [parsedData, setParsedData] = useState<any[]>([])
+  const [dragActive, setDragActive] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [detectedColumns, setDetectedColumns] = useState<{
+    emailField: string | null
+    roleField: string | null
+  }>({ emailField: null, roleField: null })
+
+  // File input ref
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Email validation function
   const validateEmail = (email: string): string | null => {
@@ -1159,6 +1218,203 @@ const UserInvitations: React.FC<{
     return null
   }
 
+  // Role normalization function - maps various role names to 'user' or 'admin'
+  const normalizeRole = (roleValue: string): string | null => {
+    if (!roleValue) return 'user'
+    
+    const normalized = roleValue.toString().trim().toLowerCase()
+    
+    // Admin variations
+    const adminRoles = [
+      'admin', 'administrator', 'manager', 'supervisor', 'lead', 'owner', 
+      'root', 'super', 'superuser', 'super user', 'superadmin', 'super admin',
+      'moderator', 'mod', 'director', 'head', 'chief', 'principal'
+    ]
+    
+    // User variations (everything else defaults to user anyway)
+    const userRoles = [
+      'user', 'member', 'employee', 'staff', 'worker', 'contributor',
+      'viewer', 'guest', 'reader', 'editor', 'standard', 'basic',
+      'regular', 'normal', 'standard user', 'end user', 'enduser'
+    ]
+    
+    // Check for admin roles first
+    if (adminRoles.includes(normalized)) {
+      return 'admin'
+    }
+    
+    // Check for user roles or default to user
+    if (userRoles.includes(normalized)) {
+      return 'user'
+    }
+    
+    // If it contains "admin" anywhere in the string
+    if (normalized.includes('admin') || normalized.includes('manager') || normalized.includes('super')) {
+      return 'admin'
+    }
+    
+    // If we can't recognize it but it's not empty, default to user
+    if (normalized.length > 0) {
+      return 'user'
+    }
+    
+    return null
+  }
+
+  // Smart email detection by analyzing actual data values
+  const detectEmailAndRoleColumns = (data: any[]): { emailField: string | null, roleField: string | null } => {
+    if (data.length === 0) return { emailField: null, roleField: null }
+    
+    const firstRow = data[0]
+    const headers = Object.keys(firstRow)
+    
+    let emailField: string | null = null
+    let roleField: string | null = null
+    
+    // Check each column to see if it contains email-like values
+    for (const header of headers) {
+      let emailCount = 0
+      let roleCount = 0
+      let totalNonEmpty = 0
+      
+      // Sample first 10 rows to determine column content type
+      const sampleSize = Math.min(10, data.length)
+      
+      for (let i = 0; i < sampleSize; i++) {
+        const value = data[i][header]?.toString()?.trim()
+        if (!value) continue
+        
+        totalNonEmpty++
+        
+        // Check if value looks like an email
+        if (value.includes('@') && value.includes('.')) {
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+          if (emailRegex.test(value)) {
+            emailCount++
+          }
+        }
+        
+        // Check if value looks like a role (case-insensitive)
+        const lowerValue = value.toLowerCase()
+        const roleKeywords = [
+          'user', 'admin', 'administrator', 'manager', 'employee', 
+          'staff', 'member', 'owner', 'editor', 'viewer', 'guest'
+        ]
+        if (roleKeywords.includes(lowerValue)) {
+          roleCount++
+        }
+      }
+      
+      // If more than 70% of non-empty values in this column are emails, it's the email column
+      if (totalNonEmpty > 0 && (emailCount / totalNonEmpty) > 0.7) {
+        emailField = header
+      }
+      
+      // If more than 50% of non-empty values look like roles, it's the role column
+      if (totalNonEmpty > 0 && (roleCount / totalNonEmpty) > 0.5) {
+        roleField = header
+      }
+    }
+    
+    console.log(`📧 Email column detected: ${emailField || 'None found'}`)
+    console.log(`👤 Role column detected: ${roleField || 'None found'}`)
+    
+    return { emailField, roleField }
+  }
+
+  const validateParsedData = (data: any[]): { valid: any[], invalid: any[], errors: string[] } => {
+    const valid: any[] = []
+    const invalid: any[] = []
+    const errors: string[] = []
+    
+    if (data.length === 0) {
+      errors.push("File is empty or contains no valid data")
+      return { valid, invalid, errors }
+    }
+    
+    // Detect email and role columns by analyzing data content
+    const { emailField, roleField } = detectEmailAndRoleColumns(data)
+    setDetectedColumns({ emailField, roleField })
+    
+    if (!emailField) {
+      const headers = Object.keys(data[0])
+      errors.push(`No email column detected. Please ensure one column contains valid email addresses with @ symbols. Available columns: ${headers.join(', ')}`)
+      return { valid, invalid, errors }
+    }
+    
+    console.log(`📧 Detected email column: "${emailField}"`)
+    if (roleField) {
+      console.log(`👤 Detected role column: "${roleField}"`)
+    } else {
+      console.log(`👤 No role column detected, will default to "user"`)
+    }
+    
+    data.forEach((row, index) => {
+      const rowNumber = index + 1
+      const email = row[emailField]?.toString()?.trim()
+      const role = roleField ? row[roleField]?.toString()?.trim() : 'user'
+      
+      if (!email) {
+        invalid.push({ 
+          ...row, 
+          rowNumber, 
+          error: `Missing email address in column "${emailField}"` 
+        })
+        return
+      }
+      
+      const emailError = validateEmail(email)
+      if (emailError) {
+        invalid.push({ 
+          ...row, 
+          rowNumber, 
+          error: `Invalid email "${email}": ${emailError}` 
+        })
+        return
+      }
+      
+      // Normalize and validate role (very flexible mapping)
+      const normalizedRole = normalizeRole(role || 'user')
+      
+      if (!normalizedRole) {
+        invalid.push({ 
+          ...row, 
+          rowNumber, 
+          error: `Invalid role "${role}". Valid options: user, admin, manager, administrator, employee, staff, etc.` 
+        })
+        return
+      }
+      
+      valid.push({
+        email: email.toLowerCase(),
+        role: normalizedRole,
+        rowNumber,
+        originalRow: row
+      })
+    })
+    
+    // Check for duplicate emails
+    const emailSet = new Set()
+    const duplicates: string[] = []
+    
+    // Process in reverse to keep the first occurrence
+    for (let i = valid.length - 1; i >= 0; i--) {
+      const row = valid[i]
+      if (emailSet.has(row.email)) {
+        duplicates.push(row.email)
+        invalid.push(valid.splice(i, 1)[0])
+      } else {
+        emailSet.add(row.email)
+      }
+    }
+    
+    if (duplicates.length > 0) {
+      errors.push(`Duplicate emails found (keeping first occurrence): ${[...new Set(duplicates)].join(', ')}`)
+    }
+    
+    return { valid, invalid, errors }
+  }
+
   // Clear errors when user starts typing
   const handleEmailChange = (email: string) => {
     setInviteEmail(email)
@@ -1170,11 +1426,10 @@ const UserInvitations: React.FC<{
     }
   }
 
+  // Single invitation handler
   const handleSendInvitation = async () => {
-    // Clear previous errors
     setErrors({})
     
-    // Validate email
     const emailError = validateEmail(inviteEmail)
     if (emailError) {
       setErrors({ email: emailError })
@@ -1202,7 +1457,6 @@ const UserInvitations: React.FC<{
       console.error("Error creating invitation:", error)
       addNotification(error.message, "error")
       
-      // Set field-specific errors if needed
       if (error.message.includes("email")) {
         setErrors({ email: error.message })
       }
@@ -1211,12 +1465,185 @@ const UserInvitations: React.FC<{
     }
   }
 
+  // File validation - CSV ONLY
+  const validateFile = (file: File): string | null => {
+    const allowedExtensions = ['.csv']
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+    
+    if (!allowedExtensions.includes(fileExtension)) {
+      return "Only CSV files are supported. Please convert Excel files to CSV format using 'Save As' → 'CSV (Comma delimited)'"
+    }
+    
+    if (file.size > 5 * 1024 * 1024) { // 5MB limit
+      return "File size must be less than 5MB"
+    }
+    
+    return null
+  }
+
+  // File parsing - CSV ONLY
+  const parseFile = async (file: File): Promise<any[]> => {
+    return new Promise((resolve, reject) => {
+      // Parse CSV with Papa Parse
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        comments: '#',
+        transformHeader: (header) => header.trim(),
+        transform: (value) => value.trim(),
+        complete: (results) => {
+          if (results.errors.length > 0) {
+            const criticalErrors = results.errors.filter(err => err.type === 'Delimiter' || err.type === 'Quotes')
+            if (criticalErrors.length > 0) {
+              reject(new Error(`CSV parsing error: ${criticalErrors[0].message}`))
+              return
+            }
+          }
+          resolve(results.data)
+        },
+        error: (error) => {
+          reject(new Error(`Failed to parse CSV: ${error.message}`))
+        }
+      })
+    })
+  }
+
+  // Handle file selection
+  const handleFileSelect = async (file: File) => {
+    const fileError = validateFile(file)
+    if (fileError) {
+      addNotification(fileError, "error")
+      return
+    }
+
+    setBulkFile(file)
+    setBulkResults(null)
+    setParsedData([])
+    setDetectedColumns({ emailField: null, roleField: null })
+
+    try {
+      addNotification("📁 Parsing CSV file...", "success")
+      const parsed = await parseFile(file)
+      
+      const { valid, invalid, errors } = validateParsedData(parsed)
+      
+      if (errors.length > 0) {
+        addNotification(`❌ File validation errors:\n${errors.join('\n')}`, "error")
+        return
+      }
+      
+      setParsedData(valid)
+      
+      if (invalid.length > 0) {
+        addNotification(`⚠️ Found ${invalid.length} invalid rows that will be skipped. Check console for details.`, "error")
+        console.log('Invalid rows:', invalid)
+      }
+      
+      addNotification(`✅ CSV parsed successfully! Found ${valid.length} valid invitations`, "success")
+    } catch (error: any) {
+      addNotification(`❌ Error parsing CSV: ${error.message}`, "error")
+      setBulkFile(null)
+      setDetectedColumns({ emailField: null, roleField: null })
+    }
+  }
+
+  // File drag and drop handlers
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragActive(false)
+    
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0) {
+      handleFileSelect(files[0])
+    }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length > 0) {
+      handleFileSelect(files[0])
+    }
+  }
+
+  // FIXED: Bulk upload handler using existing apiCall
+  const handleBulkUpload = async () => {
+    if (!bulkFile || parsedData.length === 0) {
+      addNotification("Please select and validate a file first", "error")
+      return
+    }
+
+    try {
+      setBulkLoading(true)
+      setUploadProgress(0)
+      
+      // Create FormData
+      const formData = new FormData()
+      formData.append('file', bulkFile)
+      
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => Math.min(prev + 10, 90))
+      }, 100)
+
+      // Use existing apiCall but pass FormData directly
+      const response = await apiCall("/auth/bulk-invite", formData, "POST")
+      
+      clearInterval(progressInterval)
+      setUploadProgress(100)
+
+      if (response.status === "SUCCESS") {
+        setBulkResults(response.data)
+        addNotification(`✅ Bulk upload completed! ${response.data.successful}/${response.data.total_processed} invitations sent successfully`, "success")
+      } else {
+        addNotification(response.message || "Bulk upload failed", "error")
+      }
+    } catch (error: any) {
+      console.error("Error with bulk upload:", error)
+      addNotification(`❌ Bulk upload error: ${error.message}`, "error")
+    } finally {
+      setBulkLoading(false)
+      setUploadProgress(0)
+    }
+  }
+
+  // Template download
+  const downloadTemplate = () => {
+    const csvContent = `Name,Email,Department,Role
+John Doe,john.doe@company.com,Engineering,user
+Jane Smith,jane.smith@company.com,HR,ADMIN
+Mike Johnson,mike.j@company.com,Marketing,User
+Sarah Wilson,sarah.wilson@company.com,IT,Administrator
+Bob Brown,bob.brown@company.com,Finance,Manager
+Alice Green,alice.g@company.com,Support,employee
+
+# Role examples that work (case-insensitive):
+# USER, User, user → becomes "user"
+# ADMIN, Admin, admin, Administrator, Manager, Supervisor → becomes "admin"
+# employee, staff, member, contributor → becomes "user"
+# Any unrecognized role → defaults to "user"
+
+# Notes:
+# - CSV format only (convert Excel files to CSV first)
+# - Any column containing valid email addresses (with @ symbol) will be detected automatically
+# - Role detection works with any case: USER, User, user, ADMIN, Admin, admin, etc.
+# - Column names don't matter - the system detects content automatically
+# - Lines starting with # are comments and will be ignored`
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'bulk-invite-template.csv'
+    link.click()
+    URL.revokeObjectURL(url)
+    addNotification("📋 CSV template downloaded!", "success")
+  }
+
+  // Copy to clipboard
   const copyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(generatedLink)
       addNotification("✅ Invitation link copied to clipboard!", "success")
     } catch (error) {
-      // Fallback for older browsers
       const textArea = document.createElement("textarea")
       textArea.value = generatedLink
       document.body.appendChild(textArea)
@@ -1227,171 +1654,594 @@ const UserInvitations: React.FC<{
     }
   }
 
+  // Reset bulk upload state
+  const resetBulkUpload = () => {
+    setBulkFile(null)
+    setBulkResults(null)
+    setParsedData([])
+    setDetectedColumns({ emailField: null, roleField: null })
+    setUploadProgress(0)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
   const isFormValid = () => {
     return inviteEmail.trim() && !validateEmail(inviteEmail) && !loading
   }
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-        <div className="p-6 border-b border-gray-100">
+      {/* Toggle between single and bulk invite */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-semibold text-gray-900 flex items-center">
             <Mail className="w-6 h-6 mr-3 text-blue-600" />
-            Send User Invitation
+            User Invitations
           </h3>
-          <p className="text-gray-600 mt-1">Create signup tokens and invite new users to the QTEAM system</p>
+          
+          <div className="flex items-center space-x-3">
+            <span className={`text-sm ${!showBulkUpload ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+              Single Invite
+            </span>
+            <button
+              onClick={() => {
+                setShowBulkUpload(!showBulkUpload)
+                resetBulkUpload()
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                showBulkUpload ? 'bg-blue-600' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  showBulkUpload ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+            <span className={`text-sm ${showBulkUpload ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+              Bulk Upload
+            </span>
+          </div>
         </div>
 
-        <div className="p-6 space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Email Address *
-            </label>
-            <input
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => handleEmailChange(e.target.value)}
-              placeholder="Enter user's email address"
-              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:border-blue-500 transition-colors ${
-                errors.email 
-                  ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
-                  : generatedLink 
-                    ? 'border-green-300 bg-green-50 focus:ring-green-500' 
-                    : 'border-gray-300 focus:ring-blue-500'
-              }`}
-              required
-              disabled={loading}
-              autoComplete="email"
-            />
+        {!showBulkUpload ? (
+          // Single invitation form
+          <div className="space-y-6">
+            <p className="text-gray-600">Create signup tokens and invite new users to the QTEAM system</p>
             
-            {/* Email validation feedback */}
-            {errors.email && (
-              <div className="mt-1 flex items-center text-red-600 text-sm">
-                <AlertCircle className="w-4 h-4 mr-1" />
-                {errors.email}
-              </div>
-            )}
-            
-            {/* Success feedback */}
-            {!errors.email && inviteEmail && !validateEmail(inviteEmail) && (
-              <div className="mt-1 flex items-center text-green-600 text-sm">
-                <CheckCircle className="w-4 h-4 mr-1" />
-                Email format is valid
-              </div>
-            )}
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Email Address *
+              </label>
+              <input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => handleEmailChange(e.target.value)}
+                placeholder="Enter user's email address"
+                className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:border-blue-500 transition-colors ${
+                  errors.email 
+                    ? 'border-red-300 focus:ring-red-500 focus:border-red-500' 
+                    : generatedLink 
+                      ? 'border-green-300 bg-green-50 focus:ring-green-500' 
+                      : 'border-gray-300 focus:ring-blue-500'
+                }`}
+                required
+                disabled={loading}
+                autoComplete="email"
+              />
+              
+              {errors.email && (
+                <div className="mt-1 flex items-center text-red-600 text-sm">
+                  <AlertCircle className="w-4 h-4 mr-1" />
+                  {errors.email}
+                </div>
+              )}
+              
+              {!errors.email && inviteEmail && !validateEmail(inviteEmail) && (
+                <div className="mt-1 flex items-center text-green-600 text-sm">
+                  <CheckCircle className="w-4 h-4 mr-1" />
+                  Email format is valid
+                </div>
+              )}
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">User Role</label>
-            <select
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value)}
-              disabled={loading}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-            >
-              <option value="user">User - Can request access</option>
-              <option value="admin">Admin - Can approve requests and manage users</option>
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
-              Choose the appropriate role based on the user's responsibilities
-            </p>
-          </div>
-
-          <button
-            onClick={handleSendInvitation}
-            disabled={!isFormValid()}
-            className="bg-blue-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-blue-700 transition-all duration-200 flex items-center space-x-2 w-full sm:w-auto"
-          >
-            {loading ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Creating invitation...</span>
-              </>
-            ) : (
-              <>
-                <UserPlus className="w-4 h-4" />
-                <span>Create Invitation</span>
-              </>
-            )}
-          </button>
-
-          {/* Success state with better messaging */}
-          {generatedLink && (
-            <div className="mt-6 p-4 bg-green-50 rounded-lg border border-green-200 animate-in slide-in-from-top-2 duration-300">
-              <h4 className="font-medium text-green-900 mb-2 flex items-center">
-                <CheckCircle className="w-5 h-5 mr-2" />
-                Invitation Created Successfully!
-              </h4>
-              <p className="text-sm text-green-700 mb-3">
-                📧 An invitation has been created for <strong>{inviteEmail}</strong> as a <strong>{inviteRole}</strong>. 
-                Share this secure link with them:
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">User Role</label>
+              <select
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value)}
+                disabled={loading}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="user">User - Can request access</option>
+                <option value="admin">Admin - Can approve requests and manage users</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Choose the appropriate role based on the user's responsibilities
               </p>
-              <div className="flex items-center space-x-2">
-                <input
-                  type="text"
-                  value={generatedLink}
-                  readOnly
-                  className="flex-1 px-3 py-2 text-sm border border-green-300 rounded bg-white font-mono text-xs"
-                />
+            </div>
+
+            <button
+              onClick={handleSendInvitation}
+              disabled={!isFormValid()}
+              className="bg-blue-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-blue-700 transition-all duration-200 flex items-center space-x-2 w-full sm:w-auto"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Creating invitation...</span>
+                </>
+              ) : (
+                <>
+                  <UserPlus className="w-4 h-4" />
+                  <span>Create Invitation</span>
+                </>
+              )}
+            </button>
+
+            {generatedLink && (
+              <div className="mt-6 p-4 bg-green-50 rounded-lg border border-green-200 animate-in slide-in-from-top-2 duration-300">
+                <h4 className="font-medium text-green-900 mb-2 flex items-center">
+                  <CheckCircle className="w-5 h-5 mr-2" />
+                  Invitation Created Successfully!
+                </h4>
+                <p className="text-sm text-green-700 mb-3">
+                  📧 An invitation has been created for <strong>{inviteEmail}</strong> as a <strong>{inviteRole}</strong>. 
+                  Share this secure link with them:
+                </p>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={generatedLink}
+                    readOnly
+                    className="flex-1 px-3 py-2 text-sm border border-green-300 rounded bg-white font-mono text-xs"
+                  />
+                  <button
+                    onClick={copyToClipboard}
+                    className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors flex items-center space-x-1 flex-shrink-0"
+                    title="Copy invitation link"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span className="text-sm hidden sm:inline">Copy</span>
+                  </button>
+                </div>
+                <div className="mt-3 text-xs text-green-600 space-y-1">
+                  <p>💡 Send this link via email or your preferred secure communication method</p>
+                  <p>⏰ This invitation link will expire in 72 hours</p>
+                  <p>🔒 The user will be able to create their account immediately using this link</p>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          // Bulk upload form - CSV ONLY
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <p className="text-gray-600">Upload a CSV file to invite multiple users at once</p>
+              <div className="flex items-center space-x-3">
+                {bulkFile && (
+                  <button
+                    onClick={resetBulkUpload}
+                    className="flex items-center space-x-2 text-gray-600 hover:text-gray-800 text-sm font-medium"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>Clear</span>
+                  </button>
+                )}
                 <button
-                  onClick={copyToClipboard}
-                  className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors flex items-center space-x-1 flex-shrink-0"
-                  title="Copy invitation link"
+                  onClick={downloadTemplate}
+                  className="flex items-center space-x-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
                 >
-                  <Copy className="w-4 h-4" />
-                  <span className="text-sm hidden sm:inline">Copy</span>
+                  <Download className="w-4 h-4" />
+                  <span>Download Template</span>
                 </button>
               </div>
-              <div className="mt-3 text-xs text-green-600 space-y-1">
-                <p>💡 Send this link via email or your preferred secure communication method</p>
-                <p>⏰ This invitation link will expire in 72 hours</p>
-                <p>🔒 The user will be able to create their account immediately using this link</p>
+            </div>
+
+            {/* CSV-Only Notice */}
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+              <h4 className="font-medium text-blue-900 mb-2">📋 Current Mode: CSV Only</h4>
+              <p className="text-sm text-blue-800">
+                Only CSV files are supported for bulk uploads. If you have an Excel file, please convert it to CSV format using "Save As" → "CSV (Comma delimited)" in Excel.
+              </p>
+            </div>
+
+            {/* File upload area */}
+            <div
+              className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                dragActive 
+                  ? 'border-blue-400 bg-blue-50' 
+                  : bulkFile 
+                    ? 'border-green-400 bg-green-50' 
+                    : 'border-gray-300 hover:border-gray-400'
+              }`}
+              onDragEnter={(e) => {
+                e.preventDefault()
+                setDragActive(true)
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault()
+                setDragActive(false)
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleFileDrop}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              
+              <div className="space-y-4">
+                <div className="flex justify-center">
+                  {bulkFile ? (
+                    <CheckCircle className="w-12 h-12 text-green-500" />
+                  ) : (
+                    <Upload className="w-12 h-12 text-gray-400" />
+                  )}
+                </div>
+                
+                {bulkFile ? (
+                  <div>
+                    <p className="text-lg font-medium text-green-900">CSV File Selected</p>
+                    <p className="text-sm text-green-700">{bulkFile.name}</p>
+                    <p className="text-xs text-green-600 mt-1">
+                      {parsedData.length} valid invitations ready to process
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-lg font-medium text-gray-900">
+                      Drag and drop your CSV file here, or click to browse
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      Supports CSV files (.csv) up to 5MB
+                    </p>
+                  </div>
+                )}
+                
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                >
+                  {bulkFile ? 'Choose Different File' : 'Choose CSV File'}
+                </button>
               </div>
             </div>
-          )}
-        </div>
+
+            {/* Show when no emails detected */}
+            {bulkFile && parsedData.length === 0 && !detectedColumns.emailField && (
+              <div className="bg-red-50 rounded-lg p-4 border border-red-200">
+                <h4 className="font-medium text-red-900 mb-2">❌ No Email Addresses Found</h4>
+                <div className="text-sm text-red-800 space-y-2">
+                  <p>The system couldn't find any valid email addresses in your CSV file.</p>
+                  <p><strong>Please ensure:</strong></p>
+                  <div className="ml-4 space-y-1">
+                    <p>• At least one column contains email addresses with @ symbols</p>
+                    <p>• Email addresses are properly formatted (e.g., user@company.com)</p>
+                    <p>• The file isn't empty or contains actual data beyond headers</p>
+                    <p>• The file is in CSV format (not Excel)</p>
+                  </div>
+                  <div className="mt-3 p-2 bg-white rounded border">
+                    <p className="text-xs text-gray-700 font-medium mb-1">Example of what we're looking for:</p>
+                    <div className="font-mono text-xs text-gray-600">
+                      john.doe@company.com ✓<br/>
+                      jane@example.org ✓<br/>
+                      invalid-email ✗<br/>
+                      @missing-user.com ✗
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Show detected columns */}
+            {bulkFile && parsedData.length > 0 && detectedColumns.emailField && (
+              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                <h4 className="font-medium text-green-900 mb-2">🎯 Auto-Detection Results</h4>
+                <div className="text-sm text-green-800 space-y-1">
+                  <p>📧 <strong>Email column found:</strong> "{detectedColumns.emailField}" - Contains valid email addresses</p>
+                  <p>👤 <strong>Role column:</strong> {detectedColumns.roleField ? `"${detectedColumns.roleField}" - Contains user roles` : 'Not detected - All users will be assigned "user" role'}</p>
+                  <p className="text-green-600 text-xs mt-2 flex items-center">
+                    <CheckCircle className="w-3 h-3 mr-1" />
+                    Ready to process {parsedData.length} invitations
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* File format requirements */}
+            <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+              <h4 className="font-medium text-blue-900 mb-2">📋 How It Works - Automatic Detection</h4>
+              <div className="text-sm text-blue-800 space-y-2">
+                <div>
+                  <p><strong>📧 Email Detection:</strong></p>
+                  <p className="ml-4 text-blue-700">• System automatically finds columns containing valid email addresses (with @ symbol)</p>
+                  <p className="ml-4 text-blue-700">• Column names don't matter - just put emails anywhere in your CSV</p>
+                </div>
+                <div>
+                  <p><strong>👤 Role Detection (Optional):</strong></p>
+                  <p className="ml-4 text-blue-700">• Automatically detects columns with role values (case-insensitive)</p>
+                  <p className="ml-4 text-blue-700">• <strong>Admin roles:</strong> admin, ADMIN, Administrator, Manager, Supervisor, etc.</p>
+                  <p className="ml-4 text-blue-700">• <strong>User roles:</strong> user, USER, Employee, Staff, Member, etc.</p>
+                  <p className="ml-4 text-blue-700">• If no role column found, everyone defaults to "user"</p>
+                </div>
+                <div className="mt-3">
+                  <p><strong>✨ Example CSV format:</strong></p>
+                  <div className="p-2 bg-white rounded border mt-2">
+                    <div className="font-mono text-xs text-gray-700">
+                      Name,Email,Role<br/>
+                      John Doe,john@company.com,user<br/>
+                      Jane Smith,jane@company.com,admin<br/>
+                      Mike Johnson,mike@company.com,manager
+                    </div>
+                  </div>
+                  <p className="text-blue-600 text-xs mt-2">
+                    💡 <strong>Pro tip:</strong> Just make sure your CSV has email addresses with @ symbols - we'll find them automatically!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Preview data */}
+            {parsedData.length > 0 && (
+              <div className="bg-white border border-gray-200 rounded-lg">
+                <div className="px-4 py-3 border-b border-gray-200">
+                  <h4 className="font-medium text-gray-900">Preview ({parsedData.length} invitations)</h4>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left font-medium text-gray-900">Email</th>
+                        <th className="px-4 py-2 text-left font-medium text-gray-900">Role</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {parsedData.slice(0, 10).map((row, index) => (
+                        <tr key={index}>
+                          <td className="px-4 py-2 text-gray-900">{row.email}</td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              row.role === 'admin' 
+                                ? 'bg-purple-100 text-purple-800' 
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {row.role}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {parsedData.length > 10 && (
+                    <div className="px-4 py-2 text-sm text-gray-500 bg-gray-50">
+                      ... and {parsedData.length - 10} more invitations
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Upload progress */}
+            {bulkLoading && (
+              <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-blue-900">Processing invitations...</span>
+                  <span className="text-sm text-blue-700">{uploadProgress}%</span>
+                </div>
+                <div className="w-full bg-blue-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
+
+            {/* Upload button */}
+            <button
+              onClick={handleBulkUpload}
+              disabled={!bulkFile || parsedData.length === 0 || bulkLoading}
+              className="bg-green-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-green-700 transition-all duration-200 flex items-center space-x-2 w-full sm:w-auto"
+            >
+              {bulkLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Processing {parsedData.length} invitations...</span>
+                </>
+              ) : (
+                <>
+                  <Users className="w-4 h-4" />
+                  <span>Send {parsedData.length} Invitations</span>
+                </>
+              )}
+            </button>
+
+            {/* Results display */}
+            {bulkResults && (
+              <div className="bg-white border border-gray-200 rounded-lg">
+                <div className="px-4 py-3 border-b border-gray-200">
+                  <h4 className="font-medium text-gray-900 flex items-center">
+                    <CheckCircle className="w-5 h-5 mr-2 text-green-500" />
+                    Bulk Upload Results
+                  </h4>
+                </div>
+                <div className="p-4 space-y-4">
+                  {/* Summary */}
+                  <div className="grid grid-cols-3 gap-4 text-center">
+                    <div className="p-3 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">{bulkResults.successful}</div>
+                      <div className="text-sm text-green-800">Successful</div>
+                    </div>
+                    <div className="p-3 bg-red-50 rounded-lg">
+                      <div className="text-2xl font-bold text-red-600">{bulkResults.failed}</div>
+                      <div className="text-sm text-red-800">Failed</div>
+                    </div>
+                    <div className="p-3 bg-blue-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">{bulkResults.total_processed}</div>
+                      <div className="text-sm text-blue-800">Total Processed</div>
+                    </div>
+                  </div>
+
+                  {/* Detailed results */}
+                  {bulkResults.results && bulkResults.results.length > 0 && (
+                    <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left font-medium text-gray-900">Email</th>
+                            <th className="px-4 py-2 text-left font-medium text-gray-900">Status</th>
+                            <th className="px-4 py-2 text-left font-medium text-gray-900">Details</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                          {bulkResults.results.map((result: any, index: number) => (
+                            <tr key={index}>
+                              <td className="px-4 py-2 text-gray-900">{result.email}</td>
+                              <td className="px-4 py-2">
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  result.status === 'SUCCESS' 
+                                    ? 'bg-green-100 text-green-800' 
+                                    : 'bg-red-100 text-red-800'
+                                }`}>
+                                  {result.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 text-gray-600">
+                                {result.status === 'SUCCESS' ? (
+                                  <span className="text-green-600">✓ Invitation sent</span>
+                                ) : (
+                                  <span className="text-red-600">{result.error}</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Export results button */}
+                  <button
+                    onClick={() => {
+                      const csvData = [
+                        ['Email', 'Status', 'Role', 'Signup URL', 'Error'].join(','),
+                        ...bulkResults.results.map((result: any) => [
+                          `"${result.email}"`,
+                          result.status,
+                          `"${result.role || 'user'}"`,
+                          `"${result.signup_url || ''}"`,
+                          `"${result.error || ''}"`
+                        ].join(','))
+                      ].join('\n')
+
+                      const blob = new Blob([csvData], { type: 'text/csv' })
+                      const url = URL.createObjectURL(blob)
+                      const link = document.createElement('a')
+                      link.href = url
+                      link.download = `bulk-invite-results-${new Date().toISOString().split('T')[0]}.csv`
+                      link.click()
+                      URL.revokeObjectURL(url)
+                      addNotification("Results exported successfully!", "success")
+                    }}
+                    className="flex items-center space-x-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Export Results</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* How it works section - same as before */}
+      {/* How it works section */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <h4 className="text-lg font-semibold text-gray-900 mb-4">How User Invitations Work</h4>
-        <div className="space-y-3 text-sm text-gray-600">
-          <div className="flex items-start space-x-3">
-            <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-              <span className="text-blue-600 font-semibold text-xs">1</span>
+        <h4 className="text-lg font-semibold text-gray-900 mb-4">
+          {showBulkUpload ? "How CSV Bulk Upload Works" : "How User Invitations Work"}
+        </h4>
+        
+        {showBulkUpload ? (
+          <div className="space-y-3 text-sm text-gray-600">
+            <div className="flex items-start space-x-3">
+              <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-blue-600 font-semibold text-xs">1</span>
+              </div>
+              <div>
+                <strong>Prepare CSV File:</strong> Create a CSV file with email addresses and optionally roles. Download our template to get started.
+              </div>
             </div>
-            <div>
-              <strong>Create Invitation:</strong> Enter the user's email and select their role to generate a secure
-              signup token.
+            <div className="flex items-start space-x-3">
+              <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-blue-600 font-semibold text-xs">2</span>
+              </div>
+              <div>
+                <strong>Upload & Auto-Detect:</strong> Drag and drop your CSV file. The system automatically finds email columns and role columns regardless of naming.
+              </div>
+            </div>
+            <div className="flex items-start space-x-3">
+              <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-blue-600 font-semibold text-xs">3</span>
+              </div>
+              <div>
+                <strong>Process Invitations:</strong> Review the preview and click "Send Invitations" to process all valid entries at once.
+              </div>
+            </div>
+            <div className="flex items-start space-x-3">
+              <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <CheckCircle className="w-3 h-3 text-green-600" />
+              </div>
+              <div>
+                <strong>Review Results:</strong> See a detailed report of successful and failed invitations, and export the results for your records.
+              </div>
+            </div>
+            <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+              <p className="text-blue-800 text-sm">
+                <strong>💡 Note:</strong> Excel files are not supported. Please convert Excel files to CSV format using "Save As" → "CSV (Comma delimited)" in Excel.
+              </p>
             </div>
           </div>
-          <div className="flex items-start space-x-3">
-            <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-              <span className="text-blue-600 font-semibold text-xs">2</span>
+        ) : (
+          <div className="space-y-3 text-sm text-gray-600">
+            <div className="flex items-start space-x-3">
+              <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-blue-600 font-semibold text-xs">1</span>
+              </div>
+              <div>
+                <strong>Create Invitation:</strong> Enter the user's email and select their role to generate a secure signup token.
+              </div>
             </div>
-            <div>
-              <strong>Share Link:</strong> Send the generated invitation link to the user via email or secure
-              communication.
+            <div className="flex items-start space-x-3">
+              <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-blue-600 font-semibold text-xs">2</span>
+              </div>
+              <div>
+                <strong>Share Link:</strong> Send the generated invitation link to the user via email or secure communication.
+              </div>
+            </div>
+            <div className="flex items-start space-x-3">
+              <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-blue-600 font-semibold text-xs">3</span>
+              </div>
+              <div>
+                <strong>User Registration:</strong> The user clicks the link and completes their account setup with their name and password.
+              </div>
+            </div>
+            <div className="flex items-start space-x-3">
+              <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                <CheckCircle className="w-3 h-3 text-green-600" />
+              </div>
+              <div>
+                <strong>Account Active:</strong> The user can immediately log in and start using the QTEAM system.
+              </div>
             </div>
           </div>
-          <div className="flex items-start space-x-3">
-            <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-              <span className="text-blue-600 font-semibold text-xs">3</span>
-            </div>
-            <div>
-              <strong>User Registration:</strong> The user clicks the link and completes their account setup with their
-              name and password.
-            </div>
-          </div>
-          <div className="flex items-start space-x-3">
-            <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-              <CheckCircle className="w-3 h-3 text-green-600" />
-            </div>
-            <div>
-              <strong>Account Active:</strong> The user can immediately log in and start using the QTEAM system.
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )
@@ -1915,6 +2765,656 @@ const AWSAccountsManagement: React.FC<{
     </div>
   )
 }
+
+
+// Enhanced User Management Component
+const UserManagement: React.FC<{
+  addNotification: (message: string, type: "success" | "error") => void
+}> = ({ addNotification }) => {
+  const [users, setUsers] = useState<any[]>([])
+  const [awsAccounts, setAwsAccounts] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [filterRole, setFilterRole] = useState("all")
+  const [filterStatus, setFilterStatus] = useState("all")
+  const [filterAccount, setFilterAccount] = useState("all")
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingUser, setEditingUser] = useState<any>(null)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deletingUser, setDeletingUser] = useState<any>(null)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+  
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
+
+  useEffect(() => {
+    loadUsers()
+    loadAwsAccounts()
+  }, [])
+
+  const loadUsers = async () => {
+    try {
+      setLoading(true)
+      const response = await apiCall("/admin/users", null, "GET")
+      
+      if (response.status === "SUCCESS" && response.data?.users) {
+        setUsers(response.data.users)
+      } else {
+        addNotification("Failed to load users", "error")
+      }
+    } catch (err: any) {
+      console.error("Error loading users:", err)
+      addNotification(`Error: ${err.message}`, "error")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadAwsAccounts = async () => {
+    try {
+      const response = await apiCall("/aws-accounts", null, "GET")
+      if (response.status === "SUCCESS" && response.data?.accounts) {
+        setAwsAccounts(response.data.accounts)
+      }
+    } catch (err: any) {
+      console.error("Error loading AWS accounts:", err)
+    }
+  }
+
+  const handleUserUpdate = async (userId: string, updates: any) => {
+    try {
+      setActionLoading(userId)
+      const response = await apiCall(`/admin/users/${userId}`, updates, "PUT")
+      
+      if (response.status === "SUCCESS") {
+        addNotification("User updated successfully!", "success")
+        await loadUsers()
+        setShowEditModal(false)
+        setEditingUser(null)
+      } else {
+        addNotification(response.message || "Failed to update user", "error")
+      }
+    } catch (error: any) {
+      console.error("Error updating user:", error)
+      addNotification(`Error: ${error.message}`, "error")
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleUserDelete = async (userId: string, force = false) => {
+    try {
+      setActionLoading(userId)
+      const response = await apiCall(`/admin/users/${userId}?force=${force}`, null, "DELETE")
+      
+      if (response.status === "SUCCESS") {
+        addNotification("User deleted successfully!", "success")
+        await loadUsers()
+        setShowDeleteModal(false)
+        setDeletingUser(null)
+      } else {
+        addNotification(response.message || "Failed to delete user", "error")
+      }
+    } catch (error: any) {
+      console.error("Error deleting user:", error)
+      addNotification(`Error: ${error.message}`, "error")
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const quickToggleStatus = async (user: any) => {
+    const newStatus = !user.is_active
+    await handleUserUpdate(user.user_id, { is_active: newStatus })
+  }
+
+  // Filter users
+  const filteredUsers = users.filter((user) => {
+    const matchesSearch = 
+      user.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.email.toLowerCase().includes(searchTerm.toLowerCase())
+    
+    const matchesRole = filterRole === "all" || user.role === filterRole
+    const matchesStatus = 
+      filterStatus === "all" || 
+      (filterStatus === "active" && user.is_active) ||
+      (filterStatus === "inactive" && !user.is_active)
+    
+    const matchesAccount = 
+      filterAccount === "all" || 
+      Object.keys(user.requests_by_account || {}).includes(filterAccount)
+    
+    return matchesSearch && matchesRole && matchesStatus && matchesAccount
+  })
+
+  // Pagination
+  const totalItems = filteredUsers.length
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedUsers = filteredUsers.slice(startIndex, endIndex)
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, filterRole, filterStatus, filterAccount])
+
+  const exportUsers = () => {
+    const csvData = [
+      ['Name', 'Email', 'Role', 'Status', 'Created', 'Last Login', 'Total Requests', 'Active Requests'].join(','),
+      ...filteredUsers.map(user => [
+        `"${user.full_name}"`,
+        user.email,
+        user.role,
+        user.is_active ? 'Active' : 'Inactive',
+        new Date(user.created_at).toLocaleDateString(),
+        user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never',
+        user.total_requests || 0,
+        user.active_requests || 0
+      ].join(','))
+    ].join('\n')
+
+    const blob = new Blob([csvData], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `users-export-${new Date().toISOString().split('T')[0]}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+    
+    addNotification("Users exported successfully!", "success")
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h3 className="text-xl font-semibold text-gray-900 flex items-center">
+            <Users className="w-6 h-6 mr-3 text-purple-600" />
+            User Management
+          </h3>
+          <p className="text-gray-600 mt-1">Manage user accounts, permissions, and access by AWS account</p>
+        </div>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={exportUsers}
+            disabled={filteredUsers.length === 0}
+            className="flex items-center space-x-2 px-4 py-2 text-green-600 border border-green-300 rounded-lg hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export CSV</span>
+          </button>
+          <button
+            onClick={loadUsers}
+            disabled={loading}
+            className="text-purple-600 hover:text-purple-800 flex items-center text-sm font-medium px-3 py-2 rounded-lg hover:bg-purple-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Filters and Search */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search users..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 w-64"
+              />
+            </div>
+            
+            <select
+              value={filterRole}
+              onChange={(e) => setFilterRole(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+            >
+              <option value="all">All Roles</option>
+              <option value="user">Users</option>
+              <option value="admin">Admins</option>
+            </select>
+
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+            >
+              <option value="all">All Status</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+
+            <select
+              value={filterAccount}
+              onChange={(e) => setFilterAccount(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+            >
+              <option value="all">All AWS Accounts</option>
+              {awsAccounts.map((account) => (
+                <option key={account.account_id} value={account.account_name}>
+                  {account.account_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+            >
+              <option value={5}>5 per page</option>
+              <option value={10}>10 per page</option>
+              <option value={25}>25 per page</option>
+              <option value={50}>50 per page</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Summary Stats */}
+        <div className="mt-4 pt-4 border-t border-gray-200">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+            <div className="text-center p-3 bg-purple-50 rounded-lg">
+              <div className="text-xl font-bold text-purple-600">{users.length}</div>
+              <div className="text-gray-600">Total Users</div>
+            </div>
+            <div className="text-center p-3 bg-green-50 rounded-lg">
+              <div className="text-xl font-bold text-green-600">
+                {users.filter(u => u.is_active).length}
+              </div>
+              <div className="text-gray-600">Active</div>
+            </div>
+            <div className="text-center p-3 bg-red-50 rounded-lg">
+              <div className="text-xl font-bold text-red-600">
+                {users.filter(u => !u.is_active).length}
+              </div>
+              <div className="text-gray-600">Inactive</div>
+            </div>
+            <div className="text-center p-3 bg-blue-50 rounded-lg">
+              <div className="text-xl font-bold text-blue-600">
+                {users.filter(u => u.role === 'admin').length}
+              </div>
+              <div className="text-gray-600">Admins</div>
+            </div>
+            <div className="text-center p-3 bg-gray-50 rounded-lg">
+              <div className="text-xl font-bold text-gray-600">{filteredUsers.length}</div>
+              <div className="text-gray-600">Filtered</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Users Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {paginatedUsers.length === 0 ? (
+          <div className="p-12 text-center">
+            <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Users className="w-8 h-8 text-purple-500" />
+            </div>
+            <div className="text-gray-500 text-lg mb-2">
+              {searchTerm || filterRole !== "all" || filterStatus !== "all" ? "No users found" : "No users configured"}
+            </div>
+            <div className="text-gray-400 text-sm">
+              {searchTerm || filterRole !== "all" || filterStatus !== "all" 
+                ? "Try adjusting your search or filters" 
+                : "Users will appear here once they're invited"}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      User
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Role & Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Activity
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      AWS Account Access
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {paginatedUsers.map((user) => (
+                    <tr key={user.user_id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center">
+                          <div className="flex-shrink-0 h-10 w-10">
+                            <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
+                              <span className="text-sm font-medium text-purple-600">
+                                {user.first_name?.[0]}{user.last_name?.[0]}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="ml-4">
+                            <div className="text-sm font-medium text-gray-900">{user.full_name}</div>
+                            <div className="text-sm text-gray-500">{user.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="space-y-1">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                            user.role === 'admin' 
+                              ? 'bg-purple-100 text-purple-800' 
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {user.role.toUpperCase()}
+                          </span>
+                          <div>
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              user.is_active 
+                                ? 'bg-green-100 text-green-800' 
+                                : 'bg-red-100 text-red-800'
+                            }`}>
+                              {user.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        <div className="space-y-1">
+                          <div>Total Requests: <span className="font-medium">{user.total_requests || 0}</span></div>
+                          <div>Active: <span className="font-medium text-green-600">{user.active_requests || 0}</span></div>
+                          <div>Pending: <span className="font-medium text-yellow-600">{user.pending_requests || 0}</span></div>
+                          <div className="text-xs">
+                            Last Login: {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="space-y-1">
+                          {Object.keys(user.requests_by_account || {}).length > 0 ? (
+                            Object.entries(user.requests_by_account).map(([accountName, stats]: [string, any]) => (
+                              <div key={accountName} className="text-xs">
+                                <div className="font-medium text-gray-900">{accountName}</div>
+                                <div className="text-gray-500">
+                                  {stats.total} total, {stats.active} active, {stats.pending} pending
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-xs text-gray-400">No requests yet</div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-right text-sm font-medium space-x-2">
+                        <button
+                          onClick={() => quickToggleStatus(user)}
+                          disabled={actionLoading === user.user_id}
+                          className={`inline-flex items-center px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                            user.is_active
+                              ? 'text-red-600 bg-red-50 hover:bg-red-100'
+                              : 'text-green-600 bg-green-50 hover:bg-green-100'
+                          } disabled:opacity-50`}
+                        >
+                          {actionLoading === user.user_id ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : user.is_active ? (
+                            <>
+                              <EyeOff className="w-3 h-3 mr-1" />
+                              Deactivate
+                            </>
+                          ) : (
+                            <>
+                              <Eye className="w-3 h-3 mr-1" />
+                              Activate
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingUser(user)
+                            setShowEditModal(true)
+                          }}
+                          className="text-blue-600 hover:text-blue-900 transition-colors px-3 py-1 rounded-md hover:bg-blue-50"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            setDeletingUser(user)
+                            setShowDeleteModal(true)
+                          }}
+                          className="text-red-600 hover:text-red-900 transition-colors px-3 py-1 rounded-md hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-gray-700">
+                    Showing {startIndex + 1} to {Math.min(endIndex, totalItems)} of {totalItems} users
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setCurrentPage(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-sm text-gray-600">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Edit User Modal */}
+      {showEditModal && editingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Edit User</h3>
+            
+            <div className="space-y-4">
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-sm">
+                  <div><strong>Name:</strong> {editingUser.full_name}</div>
+                  <div><strong>Email:</strong> {editingUser.email}</div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  First Name
+                </label>
+                <input
+                  type="text"
+                  value={editingUser.first_name}
+                  onChange={(e) => setEditingUser(prev => ({ ...prev, first_name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Last Name
+                </label>
+                <input
+                  type="text"
+                  value={editingUser.last_name}
+                  onChange={(e) => setEditingUser(prev => ({ ...prev, last_name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
+                <select
+                  value={editingUser.role}
+                  onChange={(e) => setEditingUser(prev => ({ ...prev, role: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                >
+                  <option value="user">User - Can request access</option>
+                  <option value="admin">Admin - Can approve requests and manage users</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={editingUser.is_active}
+                    onChange={(e) => setEditingUser(prev => ({ ...prev, is_active: e.target.checked }))}
+                    className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                  />
+                  <span className="ml-2 text-sm text-gray-700">User is active</span>
+                </label>
+                <p className="text-xs text-gray-500 mt-1">
+                  Inactive users cannot log in or make requests
+                </p>
+              </div>
+
+              {editingUser.active_requests > 0 && !editingUser.is_active && (
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-start">
+                    <AlertTriangle className="w-5 h-5 text-yellow-500 mt-0.5 mr-2 flex-shrink-0" />
+                    <div className="text-sm text-yellow-800">
+                      <strong>Warning:</strong> This user has {editingUser.active_requests} active AWS sessions. 
+                      Deactivating will prevent login but won't revoke existing access until expiration.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowEditModal(false)
+                  setEditingUser(null)
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleUserUpdate(editingUser.user_id, {
+                  first_name: editingUser.first_name,
+                  last_name: editingUser.last_name,
+                  role: editingUser.role,
+                  is_active: editingUser.is_active
+                })}
+                disabled={actionLoading === editingUser.user_id}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {actionLoading === editingUser.user_id ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Modal */}
+      {showDeleteModal && deletingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center mb-4">
+              <AlertTriangle className="w-6 h-6 text-red-500 mr-3" />
+              <h3 className="text-lg font-semibold text-gray-900">Delete User</h3>
+            </div>
+
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <div className="text-sm">
+                <div><strong>Name:</strong> {deletingUser.full_name}</div>
+                <div><strong>Email:</strong> {deletingUser.email}</div>
+                <div><strong>Role:</strong> {deletingUser.role.toUpperCase()}</div>
+                <div><strong>Status:</strong> {deletingUser.is_active ? 'Active' : 'Inactive'}</div>
+              </div>
+            </div>
+
+            {deletingUser.active_requests > 0 && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-start">
+                  <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 mr-2 flex-shrink-0" />
+                  <div className="text-sm text-red-800">
+                    <strong>Warning:</strong> This user has {deletingUser.active_requests} active AWS sessions. 
+                    Deleting will not automatically revoke their current access.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div className="text-sm text-yellow-800">
+                <strong>Note:</strong> This will deactivate the user account. Use "Force Delete" to permanently 
+                remove the user from the database.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false)
+                  setDeletingUser(null)
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleUserDelete(deletingUser.user_id, false)}
+                disabled={actionLoading === deletingUser.user_id}
+                className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors disabled:opacity-50"
+              >
+                {actionLoading === deletingUser.user_id ? "Processing..." : "Deactivate"}
+              </button>
+              <button
+                onClick={() => handleUserDelete(deletingUser.user_id, true)}
+                disabled={actionLoading === deletingUser.user_id}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {actionLoading === deletingUser.user_id ? "Processing..." : "Force Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 
 // AWS Account Selector Component
 const AWSAccountSelector: React.FC<{
@@ -2627,9 +4127,7 @@ const MyRequests: React.FC<{
   )
 }
 
-// Approvals Component
-// Enhanced Approvals Component - Updated for Your Backend
-// Complete Approvals Component with Emergency Revoke
+// Approval Component
 const Approvals: React.FC<{
   pendingRequests: any[]
   loading: boolean
@@ -2681,6 +4179,15 @@ const Approvals: React.FC<{
     }
   }, [showAllRequests])
 
+  // Handle filter status when toggling between modes
+  useEffect(() => {
+    if (showAllRequests) {
+      setFilterStatus("ALL")
+    } else {
+      setFilterStatus("PENDING")
+    }
+  }, [showAllRequests])
+
   const loadAllRequests = async () => {
     try {
       setLoadingAll(true)
@@ -2722,7 +4229,11 @@ const Approvals: React.FC<{
       request.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       request.permissions?.some((p: string) => p.toLowerCase().includes(searchTerm.toLowerCase()))
     
-    const matchesStatus = filterStatus === "ALL" || request.status === filterStatus
+    // Only apply status filtering when in "All Requests" mode
+    // In "Pending Only" mode, pendingRequests is already pre-filtered
+    const matchesStatus = showAllRequests 
+      ? (filterStatus === "ALL" || request.status === filterStatus)
+      : true // Skip status filtering for pending-only mode
     
     return matchesSearch && matchesStatus
   })
@@ -2880,6 +4391,10 @@ const Approvals: React.FC<{
 
   // New emergency revoke function
   const handleRevoke = async (requestId: string, reason: string) => {
+      if (reason.trim().length < 10) {
+    addNotification("❌ Revocation reason must be at least 10 characters", "error")
+    return
+  }
     try {
       setProcessingId(requestId)
       const response = await apiCall("/emergency-revoke", {
@@ -2931,7 +4446,7 @@ const Approvals: React.FC<{
             </span>
             <button
               onClick={() => setShowAllRequests(!showAllRequests)}
-              disabled={loadingAll}
+              // disabled={loadingAll}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
                 showAllRequests ? 'bg-blue-600' : 'bg-gray-300'
               }`}
@@ -3084,186 +4599,194 @@ const Approvals: React.FC<{
       ) : (
         <>
           <div className="space-y-4">
-            {paginatedRequests.map((request) => (
-              <div
-                key={request.request_id}
-                className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
-              >
-                <div className="p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center space-x-3">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(request.status)}`}
-                      >
-                        {request.status}
-                      </span>
-                      {request.urgency && (
+            {paginatedRequests.map((request) => {
+              // Force status to PENDING for pending-only mode
+              const displayRequest = showAllRequests 
+                ? request 
+                : { ...request, status: 'PENDING' }
+                
+              return (
+                <div
+                  key={request.request_id}
+                  className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
+                >
+                  <div className="p-6">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center space-x-3">
                         <span
-                          className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(request.urgency)}`}
+                          className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(displayRequest.status)}`}
                         >
-                          {request.urgency.toUpperCase()}
+                          {displayRequest.status}
                         </span>
-                      )}
-                      <span className="text-xs text-gray-500">
-                        Requested by: <strong>{request.email}</strong>
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-500 text-right">
-                      <div>{new Date(request.requested_at).toLocaleDateString()}</div>
-                      {request.pending_for_hours && (
-                        <div className="text-orange-600">Pending {request.pending_for_hours}h</div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                    {/* AWS Account Column */}
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 mb-2">AWS Account</div>
-                      <div className="space-y-1">
-                        {request.aws_account ? (
-                          <div className="flex items-center text-sm">
-                            <div className="p-1 bg-orange-100 rounded mr-2">
-                              🏢
-                            </div>
-                            <div>
-                              <div className="font-medium text-gray-900">{request.aws_account.account_name}</div>
-                              <div className="text-xs text-gray-500">({request.aws_account.account_number})</div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-center text-sm text-gray-500">
-                            <AlertTriangle className="w-4 h-4 mr-2" />
-                            Account info unavailable
-                          </div>
+                        {request.urgency && (
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-medium ${getUrgencyColor(request.urgency)}`}
+                          >
+                            {request.urgency.toUpperCase()}
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-500">
+                          Requested by: <strong>{request.email}</strong>
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500 text-right">
+                        <div>{new Date(request.requested_at).toLocaleDateString()}</div>
+                        {request.pending_for_hours && (
+                          <div className="text-orange-600">Pending {request.pending_for_hours}h</div>
                         )}
                       </div>
                     </div>
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
-                      <div className="flex flex-wrap gap-2">
-                        {request.permissions?.map((perm: string) => {
-                          const permData = PERMISSIONS.find((p) => p.id === perm)
-                          return (
-                            <span
-                              key={perm}
-                              className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
-                            >
-                              {permData?.icon} {permData?.label || perm}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 mb-2">Duration & Details</div>
-                      <div className="text-sm text-gray-600 space-y-1">
-                        <div className="flex items-center">
-                          <Timer className="w-4 h-4 mr-2" />
-                          {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                      {/* AWS Account Column */}
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 mb-2">AWS Account</div>
+                        <div className="space-y-1">
+                          {request.aws_account ? (
+                            <div className="flex items-center text-sm">
+                              <div className="p-1 bg-orange-100 rounded mr-2">
+                                🏢
+                              </div>
+                              <div>
+                                <div className="font-medium text-gray-900">{request.aws_account.account_name}</div>
+                                <div className="text-xs text-gray-500">({request.aws_account.account_number})</div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center text-sm text-gray-500">
+                              <AlertTriangle className="w-4 h-4 mr-2" />
+                              Account info unavailable
+                            </div>
+                          )}
                         </div>
-                        {request.approved_by && (
-                          <div className="flex items-center text-green-600">
-                            <UserCheck className="w-4 h-4 mr-2" />
-                            Approved by {request.approved_by}
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 mb-2">Requested Permissions</div>
+                        <div className="flex flex-wrap gap-2">
+                          {request.permissions?.map((perm: string) => {
+                            const permData = PERMISSIONS.find((p) => p.id === perm)
+                            return (
+                              <span
+                                key={perm}
+                                className="inline-flex items-center px-2 py-1 rounded-md bg-blue-100 text-blue-800 text-xs font-medium"
+                              >
+                                {permData?.icon} {permData?.label || perm}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 mb-2">Duration & Details</div>
+                        <div className="text-sm text-gray-600 space-y-1">
+                          <div className="flex items-center">
+                            <Timer className="w-4 h-4 mr-2" />
+                            {request.duration_minutes} minutes ({(request.duration_minutes / 60).toFixed(1)} hours)
                           </div>
-                        )}
-                        {request.status === "ACTIVE" && request.time_remaining_seconds && (
-                          <div className="flex items-center text-green-600">
-                            <Clock className="w-4 h-4 mr-2" />
-                            {formatTimeRemaining(request.time_remaining_seconds)} remaining
-                          </div>
-                        )}
+                          {request.approved_by && (
+                            <div className="flex items-center text-green-600">
+                              <UserCheck className="w-4 h-4 mr-2" />
+                              Approved by {request.approved_by}
+                            </div>
+                          )}
+                          {request.status === "ACTIVE" && request.time_remaining_seconds && (
+                            <div className="flex items-center text-green-600">
+                              <Clock className="w-4 h-4 mr-2" />
+                              {formatTimeRemaining(request.time_remaining_seconds)} remaining
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
+
+                    {request.justification && (
+                      <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                        <div className="text-sm font-medium text-gray-900 mb-1">Business Justification</div>
+                        <div className="text-sm text-gray-700">{request.justification}</div>
+                      </div>
+                    )}
+
+                    {request.comments && (
+                      <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                        <div className="text-sm text-yellow-800">
+                          <strong>Admin Comments:</strong> {request.comments}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Action buttons with consistent sizing */}
+                    {(request.status === "PENDING" || !showAllRequests) && (
+                      <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+                        {/* Quick Approve */}
+                        <button
+                          onClick={() => handleQuickApproval(request.request_id)}
+                          disabled={processingId === request.request_id}
+                          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
+                        >
+                          {processingId === request.request_id ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>Processing...</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="w-4 h-4" />
+                              <span>Quick Approve</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* Approve with Comment */}
+                        <button
+                          onClick={() => openCommentModal(request.request_id, "APPROVED", request)}
+                          disabled={processingId === request.request_id}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
+                        >
+                          <FileText className="w-4 h-4" />
+                          <span>Approve with Comment</span>
+                        </button>
+
+                        {/* Deny */}
+                        <button
+                          onClick={() => openCommentModal(request.request_id, "DENIED", request)}
+                          disabled={processingId === request.request_id}
+                          className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>Deny</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Emergency Revoke button for APPROVED or ACTIVE requests */}
+                    {(request.status === "APPROVED" || request.status === "ACTIVE") && (
+                      <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
+                        <button
+                          onClick={() => openRevokeModal(request.request_id, request)}
+                          disabled={processingId === request.request_id}
+                          className="px-4 py-2 text-orange-600 border border-orange-300 rounded-lg hover:bg-orange-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[140px] justify-center"
+                        >
+                          <AlertTriangle className="w-4 h-4" />
+                          <span>Emergency Revoke</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Info for completed requests */}
+                    {(request.status === "DENIED" || request.status === "REVOKED" || request.status === "EXPIRED") && (
+                      <div className="pt-4 border-t border-gray-100">
+                        <div className="text-sm text-gray-500 text-center">
+                          {request.status === "DENIED" && "Request was denied by administrator"}
+                          {request.status === "REVOKED" && request.emergency_revoked && "Access was emergency revoked by administrator"}
+                          {request.status === "REVOKED" && !request.emergency_revoked && "Access was revoked on expiry"}
+                          {request.status === "EXPIRED" && "Access was revoked on expiry"}
+                        </div>
+                      </div>
+                    )}
                   </div>
-
-                  {request.justification && (
-                    <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                      <div className="text-sm font-medium text-gray-900 mb-1">Business Justification</div>
-                      <div className="text-sm text-gray-700">{request.justification}</div>
-                    </div>
-                  )}
-
-                  {request.comments && (
-                    <div className="mb-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                      <div className="text-sm text-yellow-800">
-                        <strong>Admin Comments:</strong> {request.comments}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Action buttons with consistent sizing */}
-                  {request.status === "PENDING" && (
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
-                      {/* Quick Approve */}
-                      <button
-                        onClick={() => handleQuickApproval(request.request_id)}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
-                      >
-                        {processingId === request.request_id ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            <span>Processing...</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle className="w-4 h-4" />
-                            <span>Quick Approve</span>
-                          </>
-                        )}
-                      </button>
-
-                      {/* Approve with Comment */}
-                      <button
-                        onClick={() => openCommentModal(request.request_id, "APPROVED", request)}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
-                      >
-                        <FileText className="w-4 h-4" />
-                        <span>Approve with Comment</span>
-                      </button>
-
-                      {/* Deny */}
-                      <button
-                        onClick={() => openCommentModal(request.request_id, "DENIED", request)}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[120px] justify-center"
-                      >
-                        <XCircle className="w-4 h-4" />
-                        <span>Deny</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Emergency Revoke button for APPROVED or ACTIVE requests */}
-                  {(request.status === "APPROVED" || request.status === "ACTIVE") && (
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-100">
-                      <button
-                        onClick={() => openRevokeModal(request.request_id, request)}
-                        disabled={processingId === request.request_id}
-                        className="px-4 py-2 text-orange-600 border border-orange-300 rounded-lg hover:bg-orange-50 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2 min-w-[140px] justify-center"
-                      >
-                        <AlertTriangle className="w-4 h-4" />
-                        <span>Emergency Revoke</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Info for completed requests */}
-                  {/* {(request.status === "DENIED" || request.status === "REVOKED" || request.status === "EXPIRED") && (
-                    <div className="pt-4 border-t border-gray-100">
-                      <div className="text-sm text-gray-500 text-center">
-                        {request.status === "DENIED" && "Request was denied by administrator"}
-                        {request.status === "REVOKED" && "Access was emergency revoked by administrator"}
-                        {request.status === "EXPIRED" && "Access expired automatically"}
-                      </div>
-                    </div>
-                  )} */}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* Pagination Controls */}
@@ -3483,7 +5006,8 @@ const Approvals: React.FC<{
                   revokeModal.requestId &&
                   handleRevoke(revokeModal.requestId, revokeReason)
                 }
-                disabled={!revokeReason.trim() || processingId === revokeModal.requestId}
+                disabled={!revokeReason.trim() || revokeReason.trim().length < 10 || processingId === revokeModal.requestId}
+                // disabled={!revokeReason.trim() || processingId === revokeModal.requestId}
                 className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium disabled:opacity-50 flex items-center space-x-2"
               >
                 {processingId === revokeModal.requestId ? (
