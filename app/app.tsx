@@ -66,7 +66,7 @@ interface UserType {
   email: string
   first_name: string
   last_name: string
-  role: string
+  role: string  // This should contain the specialized roles like "security_engineer", etc.
   is_active: boolean
   created_at: string
   last_login?: string
@@ -113,11 +113,65 @@ interface StatusData {
   }
 }
 
+interface Role {
+  role_id: string
+  display_name: string
+  description: string
+  category: string
+  icon: string
+  is_admin: boolean
+}
+
 interface NavItem {
   id: string
   label: string
   icon: any
   badge?: number
+}
+
+// Add these new interfaces to your existing type definitions
+interface ForgotPasswordForm {
+  email: string
+}
+
+interface ResetPasswordForm {
+  token: string
+  newPassword: string
+  confirmPassword: string
+}
+
+interface ChangePasswordForm {
+  currentPassword: string
+  newPassword: string
+  confirmPassword: string
+}
+
+interface EnhancedPermissionRequest {
+  email: string
+  duration_minutes: number
+  justification: string
+  urgency: string
+  account_id: string
+  use_role_permissions?: boolean
+}
+
+interface Permission {
+  id: string
+  label: string
+  description: string
+  category: string
+  risk: string
+  icon: string
+  aws_service?: string
+}
+
+interface Role {
+  role_id: string
+  display_name: string
+  description: string
+  category: string
+  icon: string
+  is_admin: boolean
 }
 
 // API Configuration
@@ -449,6 +503,63 @@ const QUICK_DURATIONS = [
   { minutes: 480, label: "8 hours", recommended: false },
 ]
 
+// Update your global getRoleDisplayName function
+const getRoleDisplayName = (role: string, availableRoles: Role[] = []): string => {
+  // Try to find the role in loaded data first
+  const foundRole = availableRoles.find(r => r.role_id === role)
+  if (foundRole) {
+    console.log(`Found dynamic role: ${role} -> ${foundRole.display_name}`)
+    return foundRole.display_name
+  }
+  
+  // Fallback to hardcoded mapping
+  const roleNames: {[key: string]: string} = {
+    'user': 'Basic User',
+    'admin': 'Administrator',
+    'database_administrator': 'Database Administrator',
+    'system_administrator': 'System Administrator',
+    'frontend_engineer': 'Frontend Engineer',
+    'backend_engineer': 'Backend Engineer',
+    'network_engineer': 'Network Engineer',
+    'ml_engineer': 'ML Engineer',
+    'security_engineer': 'Security Engineer',
+    'devops_engineer': 'DevOps Engineer',
+    'data_engineer': 'Data Engineer',
+    'super_administrator': 'Super Administrator'
+  }
+  
+  console.log(`Using fallback role mapping: ${role} -> ${roleNames[role] || role}`)
+  return roleNames[role] || role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+}
+
+const getRoleIcon = (role: string): string => {
+  const roleIcons: {[key: string]: string} = {
+    'user': '👤',
+    'admin': '👑',
+    'database_administrator': '🗄️',
+    'system_administrator': '⚙️',
+    'frontend_engineer': '🎨',
+    'backend_engineer': '🔧',
+    'network_engineer': '🌐',
+    'ml_engineer': '🤖',
+    'security_engineer': '🛡️',
+    'devops_engineer': '🚀',
+    'data_engineer': '📊',
+    'super_administrator': '🔥'
+  }
+  return roleIcons[role] || '👤'
+}
+
+const isAdminRole = (role: string): boolean => {
+  const adminRoles = [
+    'admin', 
+    'super_administrator', 
+    'system_administrator', 
+    'security_engineer'
+  ]
+  return adminRoles.includes(role)
+}
+
 // Utility Functions
 const formatTimeRemaining = (seconds: number): string => {
   if (!seconds) return "N/A"
@@ -507,23 +618,32 @@ const LoginForm: React.FC<{
   loginForm: LoginForm
   setLoginForm: React.Dispatch<React.SetStateAction<LoginForm>>
   loading: boolean
-  handleLogin: () => Promise<void> | void // Make this return a promise
+  handleLogin: () => Promise<void> | void
 }> = ({ loginForm, setLoginForm, loading, handleLogin }) => {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [attemptCount, setAttemptCount] = useState(0)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [notifications, setNotifications] = useState<Notification[]>([])
+
+  const addNotification = (message: string, type: "success" | "error") => {
+    const id = Date.now()
+    setNotifications((prev) => [...prev, { id, message, type }])
+    setTimeout(() => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id))
+    }, 5000)
+  }
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError(null) // Clear previous errors
+    setError(null)
     
     try {
       await handleLogin()
-      setAttemptCount(0) // Reset on success
+      setAttemptCount(0)
     } catch (err: any) {
       setAttemptCount(prev => prev + 1)
       
-      // Different error messages based on the error or attempt count
       if (err.message?.includes('Invalid credentials') || err.message?.includes('Unauthorized')) {
         setError('Invalid email or password. Please check your credentials and try again.')
       } else if (err.message?.includes('User not found')) {
@@ -538,11 +658,6 @@ const LoginForm: React.FC<{
     }
   }
 
-  const togglePasswordVisibility = () => {
-    setShowPassword(!showPassword)
-  }
-
-  // Clear error when user starts typing
   const handleInputChange = (field: 'email' | 'password', value: string) => {
     if (error) {
       setError(null)
@@ -550,12 +665,10 @@ const LoginForm: React.FC<{
     setLoginForm((prev) => ({ ...prev, [field]: value }))
   }
 
-  const clearError = () => {
-    setError(null)
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4">
+      <Notifications notifications={notifications} />
+      
       <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8">
         <div className="text-center mb-8">
           <div className="p-3 bg-blue-100 rounded-xl inline-block mb-4">
@@ -567,7 +680,6 @@ const LoginForm: React.FC<{
           <p className="text-gray-600 mt-2">Qucoon Temporary Elevated Access Management</p>
         </div>
 
-        {/* Error Alert */}
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg animate-in slide-in-from-top-2 duration-300">
             <div className="flex items-start">
@@ -582,7 +694,7 @@ const LoginForm: React.FC<{
                 )}
               </div>
               <button
-                onClick={clearError}
+                onClick={() => setError(null)}
                 className="text-red-400 hover:text-red-600 transition-colors"
                 aria-label="Dismiss error"
               >
@@ -592,7 +704,6 @@ const LoginForm: React.FC<{
           </div>
         )}
 
-        {/* Success indicator when no error and not loading */}
         {!error && !loading && attemptCount === 0 && loginForm.email && loginForm.password && (
           <div className="mb-6 p-3 bg-green-50 border border-green-200 rounded-lg">
             <div className="flex items-center">
@@ -638,7 +749,7 @@ const LoginForm: React.FC<{
               />
               <button
                 type="button"
-                onClick={togglePasswordVisibility}
+                onClick={() => setShowPassword(!showPassword)}
                 className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-600 focus:outline-none transition-colors"
                 aria-label={showPassword ? "Hide password" : "Show password"}
               >
@@ -647,6 +758,18 @@ const LoginForm: React.FC<{
                 ) : (
                   <Eye className="w-5 h-5" />
                 )}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="text-sm">
+              <button
+                type="button"
+                onClick={() => setShowForgotPassword(true)}
+                className="text-blue-600 hover:text-blue-800 font-medium"
+              >
+                Forgot your password?
               </button>
             </div>
           </div>
@@ -686,7 +809,6 @@ const LoginForm: React.FC<{
           </button>
         </form>
 
-        {/* Help text */}
         <div className="mt-6 text-center">
           <p className="text-sm text-gray-600">
             Need an account? Contact your administrator for an invitation.
@@ -698,6 +820,12 @@ const LoginForm: React.FC<{
           )}
         </div>
       </div>
+
+      <ForgotPasswordModal
+        isOpen={showForgotPassword}
+        onClose={() => setShowForgotPassword(false)}
+        addNotification={addNotification}
+      />
     </div>
   )
 }
@@ -1019,60 +1147,128 @@ const Header: React.FC<{
   statusData: StatusData
   connectionStatus: ConnectionStatus
   handleLogout: () => void
-}> = ({ authState, statusData, connectionStatus, handleLogout }) => (
-  <header className="bg-white shadow-sm border-b border-gray-200">
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between h-max flex-wrap">
-        <div className="flex items-center">
-          <div className="p-2 bg-blue-100 rounded-xl mr-4">
-            <Shield className="w-10 h-10 text-blue-600" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              QTEAM
-            </h1>
-            <p className="text-sm text-gray-500 font-medium">Qucoon Temporary Elevated Access Management</p>
+  availableRoles: Role[]
+}> = ({ authState, statusData, connectionStatus, handleLogout, availableRoles }) => {
+  const [showUserMenu, setShowUserMenu] = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
+  const [notifications, setNotifications] = useState<Notification[]>([])
+
+  const addNotification = (message: string, type: "success" | "error") => {
+    const id = Date.now()
+    setNotifications((prev) => [...prev, { id, message, type }])
+    setTimeout(() => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id))
+    }, 5000)
+  }
+
+  return (
+    <>
+      <Notifications notifications={notifications} />
+      
+      <header className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center">
+              <div className="p-2 bg-blue-100 rounded-xl mr-4">
+                <Shield className="w-8 h-8 text-blue-600" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  QTEAM
+                </h1>
+                <p className="text-xs text-gray-500 font-medium">Qucoon Temporary Elevated Access Management</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center space-x-6">
+              <div className="hidden md:flex items-center space-x-4">
+                <div className="text-sm text-gray-600">
+                  Welcome back,{" "}
+                  <span className="font-semibold text-gray-900">
+                    {authState.user?.first_name} {authState.user?.last_name}
+                  </span>
+                </div>
+                <div className="flex items-center text-sm text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
+                  <User className="w-4 h-4 mr-2" />
+                  {getRoleDisplayName(authState.user?.role || '', availableRoles)}
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <div
+                  className={`w-3 h-3 rounded-full ${connectionStatus.isConnected ? "bg-green-500" : "bg-red-500"}`}
+                ></div>
+                <span className="text-sm text-gray-500">{connectionStatus.isConnected ? "Online" : "Offline"}</span>
+              </div>
+              
+              <button className="p-2 text-gray-400 hover:text-gray-600 relative">
+                <Bell className="w-6 h-6" />
+                {(statusData.summary.pending > 0 || statusData.summary.urgent > 0) && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-medium px-1.5 py-0.5 rounded-full">
+                    {statusData.summary.pending + statusData.summary.urgent}
+                  </span>
+                )}
+              </button>
+
+              {/* User Menu */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center space-x-2 text-gray-600 hover:text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-sm font-medium text-blue-600">
+                      {authState.user?.first_name?.[0]}{authState.user?.last_name?.[0]}
+                    </span>
+                  </div>
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+
+                {showUserMenu && (
+                  <div className="absolute right-0 mt-2 w-64 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200">
+                    <div className="px-4 py-2 text-sm text-gray-700 border-b border-gray-100">
+                      <div className="font-medium truncate">{authState.user?.first_name} {authState.user?.last_name}</div>
+                      <div className="text-gray-500 text-xs break-all">{authState.user?.email}</div>
+                    </div>
+                    
+                    <button
+                      onClick={() => {
+                        setShowChangePassword(true)
+                        setShowUserMenu(false)
+                      }}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      Change Password
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        handleLogout()
+                        setShowUserMenu(false)
+                      }}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      <div className="flex items-center">
+                        <LogOut className="w-4 h-4 mr-2" />
+                        Sign Out
+                      </div>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
-        <div className="flex items-center space-x-6">
-          <div className="hidden md:flex items-center space-x-4">
-            <div className="text-sm text-gray-600">
-              Welcome back,{" "}
-              <span className="font-semibold text-gray-900">
-                {authState.user?.first_name} {authState.user?.last_name}
-              </span>
-            </div>
-            <div className="flex items-center text-sm text-gray-500 bg-gray-100 px-3 py-2 rounded-lg">
-              <User className="w-4 h-4 mr-2" />
-              {authState.user?.role.toUpperCase()}
-            </div>
-          </div>
-          <div className="flex items-center space-x-2">
-            <div
-              className={`w-3 h-3 rounded-full ${connectionStatus.isConnected ? "bg-green-500" : "bg-red-500"}`}
-            ></div>
-            <span className="text-sm text-gray-500">{connectionStatus.isConnected ? "Online" : "Offline"}</span>
-          </div>
-          <button className="p-2 text-gray-400 hover:text-gray-600 relative">
-            <Bell className="w-6 h-6" />
-            {(statusData.summary.pending > 0 || statusData.summary.urgent > 0) && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-medium px-1.5 py-0.5 rounded-full">
-                {statusData.summary.pending + statusData.summary.urgent}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={handleLogout}
-            className="flex items-center space-x-2 text-gray-600 hover:text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="text-sm font-medium">Logout</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  </header>
-)
+      </header>
+
+      <ChangePasswordModal
+        isOpen={showChangePassword}
+        onClose={() => setShowChangePassword(false)}
+        addNotification={addNotification}
+      />
+    </>
+  )
+}
 
 // Navigation Component
 const Navigation: React.FC<{
@@ -1091,30 +1287,20 @@ const Navigation: React.FC<{
       ]
     }
 
-    if (authState.user?.role === "admin") {
-        return [
-          ...baseItems,
-          { id: "admin", label: "Administration", icon: Settings },
-          { 
-            id: "approvals", 
-            label: "All Requests", 
-            icon: Users,
-            ...(statusData.summary.pending > 0 && { badge: statusData.summary.pending })
-          },
-          { id: "invitations", label: "User Invitations", icon: Mail },
-          { id: "aws-accounts", label: "AWS Accounts", icon: Cloud },
-        ]
-      }
-
-    // if (authState.user?.role === "admin") {
-    //   return [
-    //     ...baseItems,
-    //     { id: "admin", label: "Administration", icon: Settings },
-    //     { id: "approvals", label: "All Requests", icon: Users, badge: statusData.summary.pending },
-    //     { id: "invitations", label: "User Invitations", icon: Mail },
-    //     { id: "aws-accounts", label: "AWS Accounts", icon: Cloud },
-    //   ]
-    // }
+    if (isAdminRole(authState.user?.role || '')) {
+      return [
+        ...baseItems,
+        { id: "admin", label: "Administration", icon: Settings },
+        { 
+          id: "approvals", 
+          label: "All Requests", 
+          icon: Users,
+          ...(statusData.summary.pending > 0 && { badge: statusData.summary.pending })
+        },
+        { id: "invitations", label: "User Invitations", icon: Mail },
+        { id: "aws-accounts", label: "AWS Accounts", icon: Cloud },
+      ]
+    }
 
     return baseItems
   }
@@ -3416,6 +3602,652 @@ const UserManagement: React.FC<{
 }
 
 
+
+// Password Reset Request Component
+const ForgotPasswordModal: React.FC<{
+  isOpen: boolean
+  onClose: () => void
+  addNotification: (message: string, type: "success" | "error") => void
+}> = ({ isOpen, onClose, addNotification }) => {
+  const [form, setForm] = useState<ForgotPasswordForm>({ email: "" })
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    try {
+      setLoading(true)
+      const response = await apiCall("/auth/forgot-password", form, "POST", false)
+      if (response.status === "SUCCESS") {
+        addNotification("Password reset instructions sent to your email", "success")
+        onClose()
+        setForm({ email: "" })
+      } else {
+        addNotification(response.message || "Failed to send reset email", "error")
+      }
+    } catch (error: any) {
+      addNotification(`Error: ${error.message}`, "error")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!isOpen) return null
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Reset Password</h3>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <p className="text-gray-600 mb-4">
+          Enter your email address and we'll send you a link to reset your password.
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Email Address
+            </label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+              placeholder="Enter your email address"
+            />
+          </div>
+
+          <div className="flex items-center justify-end space-x-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !form.email}
+              className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Sending...</span>
+                </>
+              ) : (
+                <span>Send Reset Link</span>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// Change Password Component
+const ChangePasswordModal: React.FC<{
+  isOpen: boolean
+  onClose: () => void
+  addNotification: (message: string, type: "success" | "error") => void
+}> = ({ isOpen, onClose, addNotification }) => {
+  const [form, setForm] = useState<ChangePasswordForm>({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: ""
+  })
+  const [loading, setLoading] = useState(false)
+  const [showPasswords, setShowPasswords] = useState({
+    current: false,
+    new: false,
+    confirm: false
+  })
+  const [errors, setErrors] = useState<{[key: string]: string}>({})
+
+  const validateForm = () => {
+    const newErrors: {[key: string]: string} = {}
+    
+    if (!form.currentPassword) {
+      newErrors.currentPassword = "Current password is required"
+    }
+    
+    if (!form.newPassword) {
+      newErrors.newPassword = "New password is required"
+    } else if (form.newPassword.length < 8) {
+      newErrors.newPassword = "Password must be at least 8 characters"
+    }
+    
+    if (form.newPassword !== form.confirmPassword) {
+      newErrors.confirmPassword = "Passwords do not match"
+    }
+    
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!validateForm()) return
+
+    try {
+      setLoading(true)
+      const response = await apiCall("/auth/change-password", {
+        current_password: form.currentPassword,
+        new_password: form.newPassword
+      })
+      
+      if (response.status === "SUCCESS") {
+        addNotification("Password changed successfully!", "success")
+        onClose()
+        setForm({ currentPassword: "", newPassword: "", confirmPassword: "" })
+        setErrors({})
+      } else {
+        addNotification(response.message || "Failed to change password", "error")
+      }
+    } catch (error: any) {
+      addNotification(`Error: ${error.message}`, "error")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (!isOpen) return null
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Change Password</h3>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Current Password
+            </label>
+            <div className="relative">
+              <input
+                type={showPasswords.current ? "text" : "password"}
+                value={form.currentPassword}
+                onChange={(e) => setForm({ ...form, currentPassword: e.target.value })}
+                className={`w-full px-4 py-3 pr-12 border rounded-lg focus:ring-2 transition-colors ${
+                  errors.currentPassword 
+                    ? 'border-red-300 focus:ring-red-500' 
+                    : 'border-gray-300 focus:ring-blue-500'
+                }`}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPasswords(prev => ({ ...prev, current: !prev.current }))}
+                className="absolute inset-y-0 right-0 px-3 flex items-center"
+              >
+                {showPasswords.current ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {errors.currentPassword && (
+              <p className="mt-1 text-sm text-red-600">{errors.currentPassword}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              New Password
+            </label>
+            <div className="relative">
+              <input
+                type={showPasswords.new ? "text" : "password"}
+                value={form.newPassword}
+                onChange={(e) => setForm({ ...form, newPassword: e.target.value })}
+                className={`w-full px-4 py-3 pr-12 border rounded-lg focus:ring-2 transition-colors ${
+                  errors.newPassword 
+                    ? 'border-red-300 focus:ring-red-500' 
+                    : 'border-gray-300 focus:ring-blue-500'
+                }`}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPasswords(prev => ({ ...prev, new: !prev.new }))}
+                className="absolute inset-y-0 right-0 px-3 flex items-center"
+              >
+                {showPasswords.new ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {errors.newPassword && (
+              <p className="mt-1 text-sm text-red-600">{errors.newPassword}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Confirm New Password
+            </label>
+            <div className="relative">
+              <input
+                type={showPasswords.confirm ? "text" : "password"}
+                value={form.confirmPassword}
+                onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
+                className={`w-full px-4 py-3 pr-12 border rounded-lg focus:ring-2 transition-colors ${
+                  errors.confirmPassword 
+                    ? 'border-red-300 focus:ring-red-500' 
+                    : 'border-gray-300 focus:ring-blue-500'
+                }`}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPasswords(prev => ({ ...prev, confirm: !prev.confirm }))}
+                className="absolute inset-y-0 right-0 px-3 flex items-center"
+              >
+                {showPasswords.confirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {errors.confirmPassword && (
+              <p className="mt-1 text-sm text-red-600">{errors.confirmPassword}</p>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end space-x-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Changing...</span>
+                </>
+              ) : (
+                <span>Change Password</span>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+// Role based request form component
+const RoleBasedRequestForm: React.FC<{
+  authState: AuthState;
+  availableRoles: Role[]
+  loading: boolean
+  onSuccess: () => void
+  addNotification: (message: string, type: "success" | "error") => void
+}> = ({ authState, loading, onSuccess, addNotification, availableRoles }) => {
+  const [form, setForm] = useState({
+    duration_minutes: 120,
+    justification: "",
+    urgency: "normal",
+    account_id: "",
+    selected_roles: [] as string[] // Changed to array for multiple roles
+  })
+  const [submitting, setSubmitting] = useState(false)
+  const [showRoleDropdown, setShowRoleDropdown] = useState(false)
+
+  const handleSubmit = async () => {
+    // Validation
+    const errors: string[] = []
+    
+    if (!form.account_id) {
+      errors.push("Please select an AWS account")
+    }
+    
+    if (form.selected_roles.length === 0) {
+      errors.push("Please select at least one role")
+    }
+    
+    if (form.selected_roles.length > 5) {
+      errors.push("You can select a maximum of 5 roles")
+    }
+    
+    if (form.justification.trim().length < 10) {
+      errors.push("Business justification must be at least 10 characters long")
+    }
+    
+    if (form.duration_minutes < 60 || form.duration_minutes > 480) {
+      errors.push("Duration must be between 1 and 8 hours")
+    }
+    
+    if (errors.length > 0) {
+      addNotification(errors.join(". "), "error")
+      return
+    }
+
+    try {
+      setSubmitting(true)
+      const response = await apiCall("/request-role-access", {
+        email: authState.user?.email,
+        duration_minutes: form.duration_minutes,
+        justification: form.justification,
+        urgency: form.urgency,
+        account_id: form.account_id,
+        use_role_permissions: true,
+        requested_roles: form.selected_roles // Send array of selected role IDs
+      })
+
+      if (response.status === "SUCCESS") {
+        addNotification("Role-based access request submitted successfully!", "success")
+        // Reset form
+        setForm({
+          duration_minutes: 120,
+          justification: "",
+          urgency: "normal",
+          account_id: "",
+          selected_roles: []
+        })
+        onSuccess()
+      } else {
+        addNotification(response.message || "Failed to submit request", "error")
+      }
+    } catch (error: any) {
+      addNotification(`Error: ${error.message}`, "error")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleRoleToggle = (roleId: string) => {
+    setForm(prev => {
+      const isSelected = prev.selected_roles.includes(roleId)
+      let newSelectedRoles: string[]
+      
+      if (isSelected) {
+        // Remove role
+        newSelectedRoles = prev.selected_roles.filter(id => id !== roleId)
+      } else {
+        // Add role (check max limit)
+        if (prev.selected_roles.length >= 5) {
+          addNotification("You can select a maximum of 5 roles", "error")
+          return prev
+        }
+        newSelectedRoles = [...prev.selected_roles, roleId]
+      }
+      
+      return { ...prev, selected_roles: newSelectedRoles }
+    })
+  }
+
+  const getSelectedRoleNames = () => {
+    return form.selected_roles.map(roleId => {
+      const role = availableRoles.find(r => r.role_id === roleId)
+      return role?.display_name || roleId
+    }).join(", ")
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div className="p-6 border-b border-gray-100">
+          <h3 className="text-xl font-semibold text-gray-900 flex items-center">
+            <UserCheck className="w-6 h-6 mr-3 text-green-600" />
+            Request Role-Based Access
+          </h3>
+          <p className="text-gray-600 mt-1">Request access using permissions from selected roles</p>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Role Selection Dropdown */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Select Roles (Maximum 5) *
+            </label>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowRoleDropdown(!showRoleDropdown)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-left bg-white flex items-center justify-between"
+              >
+                <span className={form.selected_roles.length === 0 ? "text-gray-500" : "text-gray-900"}>
+                  {form.selected_roles.length === 0 
+                    ? "Choose roles..." 
+                    : `${form.selected_roles.length} role${form.selected_roles.length > 1 ? 's' : ''} selected`
+                  }
+                </span>
+                <ChevronDown className={`w-5 h-5 transition-transform ${showRoleDropdown ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {/* Selected roles display */}
+              {form.selected_roles.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {form.selected_roles.map(roleId => {
+                    const role = availableRoles.find(r => r.role_id === roleId)
+                    return (
+                      <span
+                        key={roleId}
+                        className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800 border border-green-200"
+                      >
+                        {role?.display_name || roleId}
+                        <button
+                          type="button"
+                          onClick={() => handleRoleToggle(roleId)}
+                          className="ml-2 text-green-600 hover:text-green-800"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+              
+              {/* Dropdown options */}
+              {showRoleDropdown && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                  {availableRoles.map((role) => {
+                    const isSelected = form.selected_roles.includes(role.role_id)
+                    return (
+                      <div
+                        key={role.role_id}
+                        onClick={() => handleRoleToggle(role.role_id)}
+                        className={`flex items-start space-x-3 p-3 cursor-pointer transition-colors hover:bg-gray-50 ${
+                          isSelected ? "bg-green-50" : ""
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}} // Handled by onClick above
+                          className="mt-1 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-gray-900">{role.display_name}</div>
+                          {role.description && (
+                            <div className="text-sm text-gray-600">{role.description}</div>
+                          )}
+                          <div className="text-xs text-gray-500 mt-1">
+                            Role ID: <code className="bg-gray-100 px-1 rounded">{role.role_id}</code>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Select the roles whose permissions you need for this request
+            </p>
+          </div>
+
+          {/* AWS Account Selector */}
+          <AWSAccountSelector
+            selectedAccountId={form.account_id}
+            onAccountChange={(accountId) => setForm(prev => ({ ...prev, account_id: accountId }))}
+            disabled={submitting}
+          />
+
+          {/* Urgency Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Request Urgency</label>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { value: "low", label: "Low Priority", desc: "Can wait", icon: "🟢" },
+                { value: "normal", label: "Normal", desc: "Standard timing", icon: "🟡" },
+                { value: "high", label: "High Priority", desc: "Urgent business need", icon: "🟠" },
+                { value: "critical", label: "Critical", desc: "Production issue", icon: "🔴" },
+              ].map((urgency) => (
+                <label
+                  key={urgency.value}
+                  className={`flex items-center p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                    form.urgency === urgency.value
+                      ? "border-green-500 bg-green-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="urgency"
+                    value={urgency.value}
+                    checked={form.urgency === urgency.value}
+                    onChange={(e) => setForm((prev) => ({ ...prev, urgency: e.target.value }))}
+                    className="sr-only"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center mb-1">
+                      <span className="mr-2">{urgency.icon}</span>
+                      <span className="font-medium text-sm">{urgency.label}</span>
+                    </div>
+                    <div className="text-xs text-gray-500">{urgency.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Duration Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Access Duration</label>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {QUICK_DURATIONS.map((duration) => (
+                  <button
+                    key={duration.minutes}
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, duration_minutes: duration.minutes }))}
+                    className={`p-3 rounded-lg border-2 text-center cursor-pointer transition-all ${
+                      form.duration_minutes === duration.minutes
+                        ? "border-green-500 bg-green-50"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="font-medium">{duration.label}</div>
+                    {duration.recommended && <div className="text-xs text-green-600 mt-1">Recommended</div>}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center space-x-4">
+                <div className="flex-1">
+                  <input
+                    type="range"
+                    min="60"
+                    max="480"
+                    step="30"
+                    value={form.duration_minutes}
+                    onChange={(e) => setForm((prev) => ({ ...prev, duration_minutes: parseInt(e.target.value) }))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+                <div className="text-sm text-gray-600 min-w-0 font-medium">
+                  {form.duration_minutes} min ({(form.duration_minutes / 60).toFixed(1)}h)
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Justification */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Business Justification *</label>
+            <textarea
+              value={form.justification}
+              onChange={(e) => setForm((prev) => ({ ...prev, justification: e.target.value }))}
+              placeholder="Provide detailed justification for this role-based access request. Include what you plan to do, why it's necessary, and any relevant context..."
+              rows={4}
+              className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-green-500 focus:border-green-500 resize-none"
+            />
+            <div className="flex justify-between items-center mt-2">
+              <div className={`text-xs ${form.justification.length < 10 ? "text-red-500" : "text-gray-500"}`}>
+                {form.justification.length}/10 characters minimum
+              </div>
+              {form.justification.length >= 10 && (
+                <div className="text-xs text-green-600 flex items-center">
+                  <CheckCircle className="w-3 h-3 mr-1" />
+                  Looks good!
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Submit Button */}
+          <div className="flex items-center justify-end space-x-4 pt-4 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={() => setForm({
+                duration_minutes: 120,
+                justification: "",
+                urgency: "normal",
+                account_id: "",
+                selected_roles: []
+              })}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Reset Form
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={
+                submitting ||
+                loading ||
+                !form.account_id ||
+                form.selected_roles.length === 0 ||
+                form.justification.length < 10
+              }
+              className="bg-green-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-green-700 transition-all duration-200 flex items-center space-x-2 shadow-md"
+            >
+              {submitting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Submitting...</span>
+                </>
+              ) : (
+                <>
+                  <UserCheck className="w-4 h-4" />
+                  <span>Request Access for {form.selected_roles.length} Role{form.selected_roles.length !== 1 ? 's' : ''}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // AWS Account Selector Component
 const AWSAccountSelector: React.FC<{
   selectedAccountId: string
@@ -3552,12 +4384,42 @@ const RequestForm: React.FC<{
   loading: boolean
   submitRequest: () => void
   addNotification: (message: string, type: "success" | "error") => void
-  authState: AuthState
-}> = ({ requestForm, setRequestForm, loading, submitRequest, addNotification, authState }) => {
-  const justificationRef = useRef<HTMLTextAreaElement>(null)
+  authState: AuthState,
+  availableRoles:Role[]
+}> = ({ requestForm, setRequestForm, loading, submitRequest, addNotification, authState, availableRoles }) => {
+  const [requestMode, setRequestMode] = useState<"role" | "custom">("role")
+  const [dynamicPermissions, setDynamicPermissions] = useState<Permission[]>([])
+  const [loadingPermissions, setLoadingPermissions] = useState(false)
   const [expandedCategories, setExpandedCategories] = useState<{ [key: string]: boolean }>({})
+  const justificationRef = useRef<HTMLTextAreaElement>(null)
 
-  const groupedPermissions = PERMISSIONS.reduce((acc: { [key: string]: Permission[] }, perm) => {
+  // Load dynamic permissions on mount
+  useEffect(() => {
+    loadPermissions()
+  }, [])
+
+  const loadPermissions = async () => {
+    try {
+      setLoadingPermissions(true)
+      const response = await apiCall("/api/permissions", null, "GET")
+      if (response.status === "SUCCESS" && response.data?.permissions) {
+        setDynamicPermissions(response.data.permissions)
+      } else {
+        // Fallback to hardcoded permissions if API fails
+        setDynamicPermissions(PERMISSIONS)
+      }
+    } catch (error: any) {
+      console.error("Error loading permissions:", error)
+      // Use hardcoded permissions as fallback
+      setDynamicPermissions(PERMISSIONS)
+    } finally {
+      setLoadingPermissions(false)
+    }
+  }
+
+  const permissionsToUse = dynamicPermissions.length > 0 ? dynamicPermissions : PERMISSIONS
+  
+  const groupedPermissions = permissionsToUse.reduce((acc: { [key: string]: Permission[] }, perm) => {
     if (!acc[perm.category]) {
       acc[perm.category] = []
     }
@@ -3565,325 +4427,343 @@ const RequestForm: React.FC<{
     return acc
   }, {})
 
-const handleSubmit = () => {
-  const errors: string[] = []
-  
-  if (!requestForm.email) {
-    errors.push("Email address is required")
-  }
-  
-  if (!requestForm.account_id) {
-    errors.push("Please select an AWS account")
-  }
-  
-  if (requestForm.permissions.length === 0) {
-    errors.push("Please select at least one permission")
-  } else if (requestForm.permissions.length > 5) {
-    errors.push("Maximum 5 permissions allowed per request")
-  }
-  
-  if (!requestForm.justification.trim()) {
-    errors.push("Business justification is required")
-  } else if (requestForm.justification.trim().length < 10) {
-    errors.push("Business justification must be at least 10 characters long")
-  } else if (requestForm.justification.trim().length > 1000) {
-    errors.push("Business justification cannot exceed 1000 characters")
-  }
-  
-  if (!requestForm.urgency) {
-    errors.push("Please select an urgency level")
-  }
-  
-  if (requestForm.duration_minutes < 60) {
-    errors.push("Access duration must be at least 1 hour")
-  } else if (requestForm.duration_minutes > 480) {
-    errors.push("Access duration cannot exceed 8 hours")
-  }
-  
-  // Show all errors
-  if (errors.length > 0) {
-    if (errors.length === 1) {
-      addNotification(errors[0], "error")
-    } else {
-      addNotification(`Please fix the following issues:\n• ${errors.join('\n• ')}`, "error")
+  const handleReloadUserRequests = async () => {
+    // This will be called after successful submission
+    try {
+      const response = await apiCall("/user/my-requests", null, "GET")
+      if (response.status === "SUCCESS") {
+        // Update requests in parent component
+        console.log("Requests reloaded")
+      }
+    } catch (error) {
+      console.error("Error reloading requests:", error)
     }
-    
-    // Focus on the first problematic field
-    if (!requestForm.account_id) {
-      // Focus logic for account selector
-    } else if (requestForm.permissions.length === 0) {
-      // Focus logic for permissions
-    } else if (requestForm.justification.length < 10 && justificationRef.current) {
-      justificationRef.current.focus()
-    }
-    
-    return
   }
 
-  submitRequest()
-}
+  const handleRoleBasedSuccess = () => {
+    // Reset form and reload data
+    setRequestForm({
+      email: authState.user?.email || "",
+      permissions: [],
+      duration_minutes: 120,
+      justification: "",
+      urgency: "normal",
+      account_id: ""
+    })
+    handleReloadUserRequests()
+  }
 
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="p-6 border-b border-gray-100">
-          <h3 className="text-xl font-semibold text-gray-900 flex items-center">
-            <Plus className="w-6 h-6 mr-3 text-blue-600" />
-            Request Temporary Access
-          </h3>
-          <p className="text-gray-600 mt-1">Request elevated permissions for AWS resources with automatic expiration</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xl font-semibold text-gray-900 flex items-center">
+                <Plus className="w-6 h-6 mr-3 text-blue-600" />
+                Request Temporary Access
+              </h3>
+              <p className="text-gray-600 mt-1">Request elevated permissions for AWS resources with automatic expiration</p>
+            </div>
+            
+            {/* Request Mode Toggle */}
+            <div className="flex items-center space-x-3">
+              <span className={`text-sm ${requestMode === 'role' ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+                Role-Based
+              </span>
+              <button
+                onClick={() => setRequestMode(requestMode === 'role' ? 'custom' : 'role')}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  requestMode === 'custom' ? 'bg-blue-600' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    requestMode === 'custom' ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+              <span className={`text-sm ${requestMode === 'custom' ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+                Custom Permissions
+              </span>
+            </div>
+          </div>
         </div>
 
-        <div className="p-6 space-y-6">
-          {/* Email Input - Pre-filled and readonly */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Email Address *</label>
-            <input
-              type="email"
-              value={requestForm.email}
-              readOnly
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 bg-gray-50 text-gray-600"
-            />
-            <p className="text-xs text-gray-500 mt-1">Using your authenticated email address</p>
-          </div>
-
-          {/*AWS ACCOUNT SELECTOR*/}
-          <AWSAccountSelector
-            selectedAccountId={requestForm.account_id}
-            onAccountChange={(accountId) => 
-              setRequestForm(prev => ({ ...prev, account_id: accountId }))
-            }
-            disabled={loading}
+        {requestMode === "role" ? (
+          <RoleBasedRequestForm
+            authState={authState}
+            loading={loading}
+            onSuccess={handleRoleBasedSuccess}
+            availableRoles={availableRoles}
+            addNotification={addNotification}
           />
-
-          {/* Urgency Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">Request Urgency</label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                { value: "low", label: "Low Priority", desc: "Can wait", icon: "🟢" },
-                { value: "normal", label: "Normal", desc: "Standard timing", icon: "🟡" },
-                { value: "high", label: "High Priority", desc: "Urgent business need", icon: "🟠" },
-                { value: "critical", label: "Critical", desc: "Production issue", icon: "🔴" },
-              ].map((urgency) => (
-                <label
-                  key={urgency.value}
-                  className={`flex items-center p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                    requestForm.urgency === urgency.value
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-gray-200 hover:border-gray-300"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="urgency"
-                    value={urgency.value}
-                    checked={requestForm.urgency === urgency.value}
-                    onChange={(e) => setRequestForm((prev) => ({ ...prev, urgency: e.target.value }))}
-                    className="sr-only"
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center mb-1">
-                      <span className="mr-2">{urgency.icon}</span>
-                      <span className="font-medium text-sm">{urgency.label}</span>
-                    </div>
-                    <div className="text-xs text-gray-500">{urgency.desc}</div>
-                  </div>
-                </label>
-              ))}
+        ) : (
+          <div className="p-6 space-y-6">
+            {/* Email Input - Pre-filled and readonly */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email Address *</label>
+              <input
+                type="email"
+                value={requestForm.email}
+                readOnly
+                className="w-full border border-gray-300 rounded-lg px-4 py-3 bg-gray-50 text-gray-600"
+              />
+              <p className="text-xs text-gray-500 mt-1">Using your authenticated email address</p>
             </div>
-          </div>
 
-          {/* Permissions Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Required Permissions *
-              <span className="ml-2 text-xs text-gray-500">({requestForm.permissions.length} selected)</span>
-            </label>
-            <div className="space-y-4">
-              {Object.entries(groupedPermissions).map(([category, perms]) => (
-                <div key={category} className="border border-gray-200 rounded-lg">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedCategories((prev) => ({
-                        ...prev,
-                        [category]: !prev[category],
-                      }))
-                    }
-                    className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50"
-                  >
-                    <div className="flex items-center">
-                      <span className="font-medium text-gray-900">{category}</span>
-                      <span className="ml-2 text-sm text-gray-500">
-                        ({perms.filter((p) => requestForm.permissions.includes(p.id)).length}/{perms.length})
-                      </span>
-                    </div>
-                    {expandedCategories[category] ? (
-                      <ChevronUp className="w-5 h-5" />
-                    ) : (
-                      <ChevronDown className="w-5 h-5" />
-                    )}
-                  </button>
-                  {expandedCategories[category] && (
-                    <div className="p-4 pt-0 space-y-3">
-                      {perms.map((perm) => (
-                        <label
-                          key={perm.id}
-                          className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                            requestForm.permissions.includes(perm.id)
-                              ? "border-blue-300 bg-blue-50"
-                              : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={requestForm.permissions.includes(perm.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setRequestForm((prev) => ({
-                                  ...prev,
-                                  permissions: [...prev.permissions, perm.id],
-                                }))
-                              } else {
-                                setRequestForm((prev) => ({
-                                  ...prev,
-                                  permissions: prev.permissions.filter((p) => p !== perm.id),
-                                }))
-                              }
-                            }}
-                            className="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          />
-                          <div className="flex-1">
-                            <div className="flex items-center mb-1">
-                              <span className="mr-2">{perm.icon}</span>
-                              <span className="font-medium text-gray-900">{perm.label}</span>
-                              <span
-                                className={`ml-2 px-2 py-1 rounded-full text-xs font-medium ${getRiskColor(perm.risk)}`}
-                              >
-                                {perm.risk} risk
-                              </span>
-                            </div>
-                            <div className="text-sm text-gray-600">{perm.description}</div>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+            {/* AWS Account Selector */}
+            <AWSAccountSelector
+              selectedAccountId={requestForm.account_id}
+              onAccountChange={(accountId) => 
+                setRequestForm(prev => ({ ...prev, account_id: accountId }))
+              }
+              disabled={loading}
+            />
 
-          {/* Duration Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">Access Duration *</label>
-            <div className="space-y-4">
+            {/* Urgency Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">Request Urgency</label>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {QUICK_DURATIONS.map((duration) => (
-                  <button
-                    key={duration.minutes}
-                    type="button"
-                    onClick={() => setRequestForm((prev) => ({ ...prev, duration_minutes: duration.minutes }))}
-                    className={`p-3 rounded-lg border-2 text-center cursor-pointer transition-all ${
-                      requestForm.duration_minutes === duration.minutes
+                {[
+                  { value: "low", label: "Low Priority", desc: "Can wait", icon: "🟢" },
+                  { value: "normal", label: "Normal", desc: "Standard timing", icon: "🟡" },
+                  { value: "high", label: "High Priority", desc: "Urgent business need", icon: "🟠" },
+                  { value: "critical", label: "Critical", desc: "Production issue", icon: "🔴" },
+                ].map((urgency) => (
+                  <label
+                    key={urgency.value}
+                    className={`flex items-center p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                      requestForm.urgency === urgency.value
                         ? "border-blue-500 bg-blue-50"
                         : "border-gray-200 hover:border-gray-300"
                     }`}
                   >
-                    <div className="font-medium">{duration.label}</div>
-                    {duration.recommended && <div className="text-xs text-green-600 mt-1">Recommended</div>}
-                  </button>
+                    <input
+                      type="radio"
+                      name="urgency"
+                      value={urgency.value}
+                      checked={requestForm.urgency === urgency.value}
+                      onChange={(e) => setRequestForm((prev) => ({ ...prev, urgency: e.target.value }))}
+                      className="sr-only"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center mb-1">
+                        <span className="mr-2">{urgency.icon}</span>
+                        <span className="font-medium text-sm">{urgency.label}</span>
+                      </div>
+                      <div className="text-xs text-gray-500">{urgency.desc}</div>
+                    </div>
+                  </label>
                 ))}
               </div>
-              <div className="flex items-center space-x-4">
-                <div className="flex-1">
-                  <input
-                    type="range"
-                    min="60"
-                    max="480"
-                    step="30"
-                    value={requestForm.duration_minutes}
-                    onChange={(e) =>
-                      setRequestForm((prev) => ({ ...prev, duration_minutes: Number.parseInt(e.target.value) }))
-                    }
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                  />
+            </div>
+
+            {/* Permissions Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Required Permissions *
+                <span className="ml-2 text-xs text-gray-500">({requestForm.permissions.length} selected)</span>
+              </label>
+              
+              {loadingPermissions && (
+                <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="flex items-center">
+                    <RefreshCw className="w-4 h-4 animate-spin text-blue-600 mr-2" />
+                    <span className="text-sm text-blue-800">Loading available permissions...</span>
+                  </div>
                 </div>
-                <div className="text-sm text-gray-600 min-w-0 font-medium">
-                  {requestForm.duration_minutes} min ({(requestForm.duration_minutes / 60).toFixed(1)}h)
+              )}
+
+              <div className="space-y-4">
+                {Object.entries(groupedPermissions).map(([category, perms]) => (
+                  <div key={category} className="border border-gray-200 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedCategories((prev) => ({
+                          ...prev,
+                          [category]: !prev[category],
+                        }))
+                      }
+                      className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50"
+                    >
+                      <div className="flex items-center">
+                        <span className="font-medium text-gray-900">{category}</span>
+                        <span className="ml-2 text-sm text-gray-500">
+                          ({perms.filter((p) => requestForm.permissions.includes(p.id)).length}/{perms.length})
+                        </span>
+                      </div>
+                      {expandedCategories[category] ? (
+                        <ChevronUp className="w-5 h-5" />
+                      ) : (
+                        <ChevronDown className="w-5 h-5" />
+                      )}
+                    </button>
+                    {expandedCategories[category] && (
+                      <div className="p-4 pt-0 space-y-3">
+                        {perms.map((perm) => (
+                          <label
+                            key={perm.id}
+                            className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                              requestForm.permissions.includes(perm.id)
+                                ? "border-blue-300 bg-blue-50"
+                                : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={requestForm.permissions.includes(perm.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setRequestForm((prev) => ({
+                                    ...prev,
+                                    permissions: [...prev.permissions, perm.id],
+                                  }))
+                                } else {
+                                  setRequestForm((prev) => ({
+                                    ...prev,
+                                    permissions: prev.permissions.filter((p) => p !== perm.id),
+                                  }))
+                                }
+                              }}
+                              className="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div className="flex-1">
+                              <div className="flex items-center mb-1">
+                                <span className="mr-2">{perm.icon}</span>
+                                <span className="font-medium text-gray-900">{perm.label}</span>
+                                <span
+                                  className={`ml-2 px-2 py-1 rounded-full text-xs font-medium ${getRiskColor(perm.risk)}`}
+                                >
+                                  {perm.risk} risk
+                                </span>
+                              </div>
+                              <div className="text-sm text-gray-600">{perm.description}</div>
+                              {perm.aws_service && (
+                                <div className="text-xs text-gray-500 mt-1">Service: {perm.aws_service}</div>
+                              )}
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+
+            {/* Duration Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">Access Duration *</label>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {QUICK_DURATIONS.map((duration) => (
+                    <button
+                      key={duration.minutes}
+                      type="button"
+                      onClick={() => setRequestForm((prev) => ({ ...prev, duration_minutes: duration.minutes }))}
+                      className={`p-3 rounded-lg border-2 text-center cursor-pointer transition-all ${
+                        requestForm.duration_minutes === duration.minutes
+                          ? "border-blue-500 bg-blue-50"
+                          : "border-gray-200 hover:border-gray-300"
+                      }`}
+                    >
+                      <div className="font-medium">{duration.label}</div>
+                      {duration.recommended && <div className="text-xs text-green-600 mt-1">Recommended</div>}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center space-x-4">
+                  <div className="flex-1">
+                    <input
+                      type="range"
+                      min="60"
+                      max="480"
+                      step="30"
+                      value={requestForm.duration_minutes}
+                      onChange={(e) =>
+                        setRequestForm((prev) => ({ ...prev, duration_minutes: Number.parseInt(e.target.value) }))
+                      }
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+                  <div className="text-sm text-gray-600 min-w-0 font-medium">
+                    {requestForm.duration_minutes} min ({(requestForm.duration_minutes / 60).toFixed(1)}h)
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* Justification */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Business Justification *</label>
-            <textarea
-              ref={justificationRef}
-              value={requestForm.justification}
-              onChange={(e) => setRequestForm((prev) => ({ ...prev, justification: e.target.value }))}
-              placeholder="Provide detailed justification for this access request. Include what you plan to do, why it's necessary, and any relevant context..."
-              rows={4}
-              className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-            />
-            <div className="flex justify-between items-center mt-2">
-              <div className={`text-xs ${requestForm.justification.length < 10 ? "text-red-500" : "text-gray-500"}`}>
-                {requestForm.justification.length}/10 characters minimum
-              </div>
-              {requestForm.justification.length >= 10 && (
-                <div className="text-xs text-green-600 flex items-center">
-                  <CheckCircle className="w-3 h-3 mr-1" />
-                  Looks good!
+            {/* Justification */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Business Justification *</label>
+              <textarea
+                ref={justificationRef}
+                value={requestForm.justification}
+                onChange={(e) => setRequestForm((prev) => ({ ...prev, justification: e.target.value }))}
+                placeholder="Provide detailed justification for this access request. Include what you plan to do, why it's necessary, and any relevant context..."
+                rows={4}
+                className="w-full border border-gray-300 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+              />
+              <div className="flex justify-between items-center mt-2">
+                <div className={`text-xs ${requestForm.justification.length < 10 ? "text-red-500" : "text-gray-500"}`}>
+                  {requestForm.justification.length}/10 characters minimum
                 </div>
-              )}
+                {requestForm.justification.length >= 10 && (
+                  <div className="text-xs text-green-600 flex items-center">
+                    <CheckCircle className="w-3 h-3 mr-1" />
+                    Looks good!
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <div className="flex items-center justify-end space-x-4 pt-4 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() =>
+                  setRequestForm({
+                    email: authState.user?.email || "",
+                    permissions: [],
+                    duration_minutes: 120,
+                    justification: "",
+                    urgency: "normal",
+                    account_id: ""
+                  })
+                }
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Reset Form
+              </button>
+              <button
+                onClick={submitRequest}
+                disabled={
+                  loading ||
+                  !requestForm.email ||
+                  !requestForm.account_id ||
+                  requestForm.permissions.length === 0 ||
+                  requestForm.justification.length < 10
+                }
+                className="bg-blue-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-blue-700 transition-all duration-200 flex items-center space-x-2 shadow-md"
+              >
+                {loading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Submitting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" />
+                    <span>Submit Request</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
-
-          {/* Submit Button */}
-          <div className="flex items-center justify-end space-x-4 pt-4 border-t border-gray-100">
-            <button
-              type="button"
-              onClick={() =>
-                setRequestForm({
-                  email: authState.user?.email || "",
-                  permissions: [],
-                  duration_minutes: 120,
-                  justification: "",
-                  urgency: "normal",
-                  account_id: ""
-                })
-              }
-              className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
-            >
-              Reset Form
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={
-                loading ||
-                !requestForm.email ||
-                !requestForm.account_id ||
-                requestForm.permissions.length === 0 ||
-                requestForm.justification.length < 10
-              }
-              className="bg-blue-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-blue-700 transition-all duration-200 flex items-center space-x-2 shadow-md"
-            >
-              {loading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Submitting...</span>
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4" />
-                  <span>Submit Request</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )
@@ -5202,6 +6082,36 @@ const AdminDashboard: React.FC<{
             </button>
           </div>
 
+
+          {/* // Add this button to your existing AdminDashboard component */}
+          {/* Insert this in the grid with other admin actions: */}
+          <div className="p-6 border border-gray-200 rounded-xl hover:shadow-md transition-shadow">
+            <div className="flex items-center mb-3">
+              <div className="p-2 bg-purple-100 rounded-lg mr-3">
+                <Settings className="w-6 h-6 text-purple-600" />
+              </div>
+              <h4 className="font-semibold text-gray-900">Initialize Database</h4>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">Set up roles and permissions (one-time setup)</p>
+            <button
+              onClick={async () => {
+                try {
+                  const response = await apiCall("/admin/initialize-database")
+                  if (response.status === "SUCCESS") {
+                    addNotification("Database initialized successfully!", "success")
+                  } else {
+                    addNotification("Database initialization failed", "error")
+                  }
+                } catch (error: any) {
+                  addNotification(`Error: ${error.message}`, "error")
+                }
+              }}
+              className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors w-full"
+            >
+              Initialize Database
+            </button>
+          </div>
+
           <div className="p-6 border border-gray-200 rounded-xl hover:shadow-md transition-shadow">
             <div className="flex items-center mb-3">
               <div className="p-2 bg-blue-100 rounded-lg mr-3">
@@ -5276,6 +6186,7 @@ const AdminDashboard: React.FC<{
   )
 }
 
+
 // Main TEAM System Component
 const TEAMSystem: React.FC = () => {
   const [authState, setAuthState] = useState<AuthState>({
@@ -5283,6 +6194,23 @@ const TEAMSystem: React.FC = () => {
     user: null,
     token: null,
   })
+  const [availableRoles, setAvailableRoles] = useState<Role[]>([])
+  const loadAvailableRoles = async () => {
+  try {
+    console.log("Loading available roles...")
+    const response = await apiCall("/api/roles", null, "GET");
+    console.log("response: ", response)
+
+    if (response.status === "SUCCESS" && response.data?.roles) {
+      setAvailableRoles(response.data.roles)
+      console.log("Loaded roles:", response.data.roles)
+    } else {
+      console.log("No roles data in response:", response)
+    }
+  } catch (error: any) {
+    console.error("Error loading roles:", error)
+  }
+}
   const [loginForm, setLoginForm] = useState<LoginForm>({
     email: "",
     password: "",
@@ -5318,6 +6246,7 @@ const [requestForm, setRequestForm] = useState<RequestForm>({
   account_id: ""
 })
 
+
   // Status Data
   const [statusData, setStatusData] = useState<StatusData>({
     active: [],
@@ -5351,6 +6280,7 @@ const [requestForm, setRequestForm] = useState<RequestForm>({
     if (authState.isAuthenticated) {
       loadInitialData()
       checkConnection()
+      loadAvailableRoles() 
 
       // Set up periodic connection check
       const connectionInterval = setInterval(checkConnection, 300000) // Check every 5 minutes
@@ -5633,6 +6563,7 @@ const [requestForm, setRequestForm] = useState<RequestForm>({
               submitRequest={submitRequest}
               addNotification={addNotification}
               authState={authState}
+              availableRoles={availableRoles}
             />
           )
         case "my-requests":
@@ -5782,6 +6713,7 @@ const [requestForm, setRequestForm] = useState<RequestForm>({
         statusData={statusData}
         connectionStatus={connectionStatus}
         handleLogout={handleLogout}
+        availableRoles={availableRoles}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
