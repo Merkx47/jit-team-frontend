@@ -174,6 +174,24 @@ interface Role {
   is_admin: boolean
 }
 
+interface User {
+  user_id: string
+  email: string
+  first_name: string
+  last_name: string
+  role: string
+  role_display_name: string
+  is_active: boolean
+  created_at: string
+  last_login?: string
+  must_change_password: boolean
+  auto_created: boolean
+}
+
+interface UserManagementProps {
+  addNotification: (message: string, type: "success" | "error") => void
+}
+
 // API Configuration
 const API_CONFIG: ApiConfig = {
   // Your deployed Lambda URL
@@ -1299,6 +1317,7 @@ const Navigation: React.FC<{
         },
         { id: "invitations", label: "User Invitations", icon: Mail },
         { id: "aws-accounts", label: "AWS Accounts", icon: Cloud },
+        { id: "user-management", label: "User Management", icon: UserCheck },
       ]
     }
 
@@ -2954,35 +2973,57 @@ const AWSAccountsManagement: React.FC<{
 
 
 // Enhanced User Management Component
+// Enhanced User Management Component with Custom Role Change Reason Modal
 const UserManagement: React.FC<{
   addNotification: (message: string, type: "success" | "error") => void
 }> = ({ addNotification }) => {
   const [users, setUsers] = useState<any[]>([])
-  const [awsAccounts, setAwsAccounts] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [filterRole, setFilterRole] = useState("all")
   const [filterStatus, setFilterStatus] = useState("all")
-  const [filterAccount, setFilterAccount] = useState("all")
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingUser, setEditingUser] = useState<any>(null)
-  const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const [deletingUser, setDeletingUser] = useState<any>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   
-  // Pagination
+  // State for activate/deactivate reason modal
+  const [reasonModal, setReasonModal] = useState<{
+    show: boolean
+    action: 'activate' | 'deactivate' | null
+    user: any
+  }>({
+    show: false,
+    action: null,
+    user: null
+  })
+  const [reasonText, setReasonText] = useState("")
+  
+  // NEW: State for role change reason modal
+  const [roleChangeModal, setRoleChangeModal] = useState<{
+    show: boolean
+    user: any
+    newRole: string
+    oldRole: string
+  }>({
+    show: false,
+    user: null,
+    newRole: '',
+    oldRole: ''
+  })
+  const [roleChangeReason, setRoleChangeReason] = useState("")
+  
+  // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(10)
 
   useEffect(() => {
     loadUsers()
-    loadAwsAccounts()
   }, [])
 
   const loadUsers = async () => {
     try {
       setLoading(true)
-      const response = await apiCall("/admin/users", null, "GET")
+      const response = await apiCall("/admin/users-with-roles", null, "GET")
       
       if (response.status === "SUCCESS" && response.data?.users) {
         setUsers(response.data.users)
@@ -2997,54 +3038,73 @@ const UserManagement: React.FC<{
     }
   }
 
-  const loadAwsAccounts = async () => {
+  const handleDeactivateUser = async (userId: string, reason: string) => {
     try {
-      const response = await apiCall("/aws-accounts", null, "GET")
-      if (response.status === "SUCCESS" && response.data?.accounts) {
-        setAwsAccounts(response.data.accounts)
+      setActionLoading(userId)
+      const response = await apiCall('/admin/deactivate-user', {
+        user_id: userId,
+        reason
+      })
+      
+      if (response.status === 'SUCCESS') {
+        addNotification('User deactivated successfully', 'success')
+        await loadUsers()
+      } else {
+        addNotification('Failed to deactivate user', 'error')
       }
-    } catch (err: any) {
-      console.error("Error loading AWS accounts:", err)
+    } catch (error: any) {
+      addNotification(`Error: ${error.message}`, 'error')
+    } finally {
+      setActionLoading(null)
+      setReasonModal({ show: false, action: null, user: null })
+      setReasonText("")
     }
   }
 
-  const handleUserUpdate = async (userId: string, updates: any) => {
+  const handleReactivateUser = async (userId: string, reason: string) => {
     try {
       setActionLoading(userId)
-      const response = await apiCall(`/admin/users/${userId}`, updates, "PUT")
+      const response = await apiCall('/admin/reactivate-user', {
+        user_id: userId,
+        reason
+      })
       
-      if (response.status === "SUCCESS") {
-        addNotification("User updated successfully!", "success")
+      if (response.status === 'SUCCESS') {
+        addNotification('User reactivated successfully', 'success')
+        await loadUsers()
+      } else {
+        addNotification('Failed to reactivate user', 'error')
+      }
+    } catch (error: any) {
+      addNotification(`Error: ${error.message}`, 'error')
+    } finally {
+      setActionLoading(null)
+      setReasonModal({ show: false, action: null, user: null })
+      setReasonText("")
+    }
+  }
+
+  const handleChangeRole = async (userId: string, newRole: string, reason: string) => {
+    try {
+      setActionLoading(userId)
+      const response = await apiCall('/admin/change-user-role', {
+        user_id: userId,
+        new_role: newRole,
+        reason
+      })
+      
+      if (response.status === 'SUCCESS') {
+        addNotification('User role changed successfully', 'success')
         await loadUsers()
         setShowEditModal(false)
         setEditingUser(null)
+        setRoleChangeModal({ show: false, user: null, newRole: '', oldRole: '' })
+        setRoleChangeReason("")
       } else {
-        addNotification(response.message || "Failed to update user", "error")
+        addNotification('Failed to change user role', 'error')
       }
     } catch (error: any) {
-      console.error("Error updating user:", error)
-      addNotification(`Error: ${error.message}`, "error")
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
-  const handleUserDelete = async (userId: string, force = false) => {
-    try {
-      setActionLoading(userId)
-      const response = await apiCall(`/admin/users/${userId}?force=${force}`, null, "DELETE")
-      
-      if (response.status === "SUCCESS") {
-        addNotification("User deleted successfully!", "success")
-        await loadUsers()
-        setShowDeleteModal(false)
-        setDeletingUser(null)
-      } else {
-        addNotification(response.message || "Failed to delete user", "error")
-      }
-    } catch (error: any) {
-      console.error("Error deleting user:", error)
-      addNotification(`Error: ${error.message}`, "error")
+      addNotification(`Error: ${error.message}`, 'error')
     } finally {
       setActionLoading(null)
     }
@@ -3052,14 +3112,53 @@ const UserManagement: React.FC<{
 
   const quickToggleStatus = async (user: any) => {
     const newStatus = !user.is_active
-    await handleUserUpdate(user.user_id, { is_active: newStatus })
+    const action = newStatus ? 'activate' : 'deactivate'
+    
+    setReasonModal({
+      show: true,
+      action: action,
+      user: user
+    })
+    setReasonText("")
+  }
+
+  const handleReasonSubmit = async () => {
+    if (!reasonText.trim() || reasonText.trim().length < 3) {
+      addNotification('A reason is required and must be at least 3 characters long', 'error')
+      return
+    }
+
+    if (reasonModal.action === 'activate') {
+      await handleReactivateUser(reasonModal.user.user_id, reasonText.trim())
+    } else if (reasonModal.action === 'deactivate') {
+      await handleDeactivateUser(reasonModal.user.user_id, reasonText.trim())
+    }
+  }
+
+  // NEW: Handle role change reason submission
+  const handleRoleChangeSubmit = async () => {
+    if (!roleChangeReason.trim() || roleChangeReason.trim().length < 3) {
+      addNotification('A reason is required and must be at least 3 characters long', 'error')
+      return
+    }
+
+    await handleChangeRole(
+      roleChangeModal.user.user_id, 
+      roleChangeModal.newRole, 
+      roleChangeReason.trim()
+    )
   }
 
   // Filter users
   const filteredUsers = users.filter((user) => {
+    const fullName = user.first_name && user.last_name 
+      ? `${user.first_name} ${user.last_name}` 
+      : (user.email || '')
+    const email = user.email || ''
+    
     const matchesSearch = 
-      user.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase())
+      fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      email.toLowerCase().includes(searchTerm.toLowerCase())
     
     const matchesRole = filterRole === "all" || user.role === filterRole
     const matchesStatus = 
@@ -3067,11 +3166,7 @@ const UserManagement: React.FC<{
       (filterStatus === "active" && user.is_active) ||
       (filterStatus === "inactive" && !user.is_active)
     
-    const matchesAccount = 
-      filterAccount === "all" || 
-      Object.keys(user.requests_by_account || {}).includes(filterAccount)
-    
-    return matchesSearch && matchesRole && matchesStatus && matchesAccount
+    return matchesSearch && matchesRole && matchesStatus
   })
 
   // Pagination
@@ -3081,23 +3176,22 @@ const UserManagement: React.FC<{
   const endIndex = startIndex + itemsPerPage
   const paginatedUsers = filteredUsers.slice(startIndex, endIndex)
 
-  // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1)
-  }, [searchTerm, filterRole, filterStatus, filterAccount])
+  }, [searchTerm, filterRole, filterStatus])
 
   const exportUsers = () => {
     const csvData = [
-      ['Name', 'Email', 'Role', 'Status', 'Created', 'Last Login', 'Total Requests', 'Active Requests'].join(','),
+      ['Name', 'Email', 'Role', 'Status', 'Created', 'Last Login', 'Must Change Password', 'Auto Created'].join(','),
       ...filteredUsers.map(user => [
-        `"${user.full_name}"`,
+        `"${user.first_name || ''} ${user.last_name || ''}"`.trim(),
         user.email,
-        user.role,
+        user.role_display_name || user.role,
         user.is_active ? 'Active' : 'Inactive',
         new Date(user.created_at).toLocaleDateString(),
         user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never',
-        user.total_requests || 0,
-        user.active_requests || 0
+        user.must_change_password ? 'Yes' : 'No',
+        user.auto_created ? 'Yes' : 'No'
       ].join(','))
     ].join('\n')
 
@@ -3121,7 +3215,7 @@ const UserManagement: React.FC<{
             <Users className="w-6 h-6 mr-3 text-purple-600" />
             User Management
           </h3>
-          <p className="text-gray-600 mt-1">Manage user accounts, permissions, and access by AWS account</p>
+          <p className="text-gray-600 mt-1">Manage user accounts, roles, and access status</p>
         </div>
         <div className="flex items-center space-x-3">
           <button
@@ -3177,19 +3271,6 @@ const UserManagement: React.FC<{
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
-
-            <select
-              value={filterAccount}
-              onChange={(e) => setFilterAccount(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-            >
-              <option value="all">All AWS Accounts</option>
-              {awsAccounts.map((account) => (
-                <option key={account.account_id} value={account.account_name}>
-                  {account.account_name}
-                </option>
-              ))}
-            </select>
           </div>
 
           <div className="flex items-center space-x-3">
@@ -3211,7 +3292,7 @@ const UserManagement: React.FC<{
 
         {/* Summary Stats */}
         <div className="mt-4 pt-4 border-t border-gray-200">
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div className="text-center p-3 bg-purple-50 rounded-lg">
               <div className="text-xl font-bold text-purple-600">{users.length}</div>
               <div className="text-gray-600">Total Users</div>
@@ -3227,12 +3308,6 @@ const UserManagement: React.FC<{
                 {users.filter(u => !u.is_active).length}
               </div>
               <div className="text-gray-600">Inactive</div>
-            </div>
-            <div className="text-center p-3 bg-blue-50 rounded-lg">
-              <div className="text-xl font-bold text-blue-600">
-                {users.filter(u => u.role === 'admin').length}
-              </div>
-              <div className="text-gray-600">Admins</div>
             </div>
             <div className="text-center p-3 bg-gray-50 rounded-lg">
               <div className="text-xl font-bold text-gray-600">{filteredUsers.length}</div>
@@ -3271,10 +3346,7 @@ const UserManagement: React.FC<{
                       Role & Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Activity
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      AWS Account Access
+                      Account Details
                     </th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
@@ -3289,12 +3361,17 @@ const UserManagement: React.FC<{
                           <div className="flex-shrink-0 h-10 w-10">
                             <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
                               <span className="text-sm font-medium text-purple-600">
-                                {user.first_name?.[0]}{user.last_name?.[0]}
+                                {user.first_name?.[0] || user.email?.[0]?.toUpperCase()}
+                                {user.last_name?.[0] || ''}
                               </span>
                             </div>
                           </div>
                           <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">{user.full_name}</div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {user.first_name && user.last_name 
+                                ? `${user.first_name} ${user.last_name}` 
+                                : user.email}
+                            </div>
                             <div className="text-sm text-gray-500">{user.email}</div>
                           </div>
                         </div>
@@ -3306,7 +3383,7 @@ const UserManagement: React.FC<{
                               ? 'bg-purple-100 text-purple-800' 
                               : 'bg-blue-100 text-blue-800'
                           }`}>
-                            {user.role.toUpperCase()}
+                            {user.role_display_name || user.role?.toUpperCase()}
                           </span>
                           <div>
                             <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
@@ -3321,27 +3398,13 @@ const UserManagement: React.FC<{
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
                         <div className="space-y-1">
-                          <div>Total Requests: <span className="font-medium">{user.total_requests || 0}</span></div>
-                          <div>Active: <span className="font-medium text-green-600">{user.active_requests || 0}</span></div>
-                          <div>Pending: <span className="font-medium text-yellow-600">{user.pending_requests || 0}</span></div>
-                          <div className="text-xs">
-                            Last Login: {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="space-y-1">
-                          {Object.keys(user.requests_by_account || {}).length > 0 ? (
-                            Object.entries(user.requests_by_account).map(([accountName, stats]: [string, any]) => (
-                              <div key={accountName} className="text-xs">
-                                <div className="font-medium text-gray-900">{accountName}</div>
-                                <div className="text-gray-500">
-                                  {stats.total} total, {stats.active} active, {stats.pending} pending
-                                </div>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="text-xs text-gray-400">No requests yet</div>
+                          <div>Created: {new Date(user.created_at).toLocaleDateString()}</div>
+                          <div>Last Login: {user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</div>
+                          {user.must_change_password && (
+                            <div className="text-orange-600 text-xs">Must change password</div>
+                          )}
+                          {user.auto_created && (
+                            <div className="text-purple-600 text-xs">Auto-created account</div>
                           )}
                         </div>
                       </td>
@@ -3376,16 +3439,7 @@ const UserManagement: React.FC<{
                           }}
                           className="text-blue-600 hover:text-blue-900 transition-colors px-3 py-1 rounded-md hover:bg-blue-50"
                         >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => {
-                            setDeletingUser(user)
-                            setShowDeleteModal(true)
-                          }}
-                          className="text-red-600 hover:text-red-900 transition-colors px-3 py-1 rounded-md hover:bg-red-50"
-                        >
-                          Delete
+                          Edit Role
                         </button>
                       </td>
                     </tr>
@@ -3427,46 +3481,103 @@ const UserManagement: React.FC<{
         )}
       </div>
 
-      {/* Edit User Modal */}
+      {/* Activate/Deactivate Reason Modal */}
+      {reasonModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center mb-4">
+              {reasonModal.action === 'deactivate' ? (
+                <EyeOff className="w-6 h-6 text-red-500 mr-3" />
+              ) : (
+                <Eye className="w-6 h-6 text-green-500 mr-3" />
+              )}
+              <h3 className="text-lg font-semibold text-gray-900">
+                {reasonModal.action === 'deactivate' ? 'Deactivate User' : 'Activate User'}
+              </h3>
+            </div>
+
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <div className="text-sm">
+                <div><strong>User:</strong> {reasonModal.user?.first_name} {reasonModal.user?.last_name}</div>
+                <div><strong>Email:</strong> {reasonModal.user?.email}</div>
+                <div><strong>Current Status:</strong> {reasonModal.user?.is_active ? 'Active' : 'Inactive'}</div>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Reason for {reasonModal.action}ion: *
+              </label>
+              <textarea
+                value={reasonText}
+                onChange={(e) => setReasonText(e.target.value)}
+                placeholder={`Please provide a clear reason for ${reasonModal.action === 'deactivate' ? 'deactivating' : 'reactivating'} this user...`}
+                rows={3}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              />
+              <p className="text-xs text-gray-600 mt-1">
+                Minimum 3 characters required. This will be logged for audit purposes.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setReasonModal({ show: false, action: null, user: null })
+                  setReasonText("")
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReasonSubmit}
+                disabled={!reasonText.trim() || reasonText.trim().length < 3 || actionLoading === reasonModal.user?.user_id}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center space-x-2 ${
+                  reasonModal.action === 'deactivate'
+                    ? 'bg-red-600 text-white hover:bg-red-700'
+                    : 'bg-green-600 text-white hover:bg-green-700'
+                }`}
+              >
+                {actionLoading === reasonModal.user?.user_id ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Processing...</span>
+                  </>
+                ) : reasonModal.action === 'deactivate' ? (
+                  <>
+                    <EyeOff className="w-4 h-4" />
+                    <span>Deactivate User</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-4 h-4" />
+                    <span>Activate User</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* UPDATED: Edit Role Modal - Without the ugly prompt */}
       {showEditModal && editingUser && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Edit User</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Change User Role</h3>
             
             <div className="space-y-4">
               <div className="p-3 bg-gray-50 rounded-lg">
                 <div className="text-sm">
-                  <div><strong>Name:</strong> {editingUser.full_name}</div>
+                  <div><strong>User:</strong> {editingUser.first_name} {editingUser.last_name}</div>
                   <div><strong>Email:</strong> {editingUser.email}</div>
+                  <div><strong>Current Role:</strong> {editingUser.role_display_name || editingUser.role}</div>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  First Name
-                </label>
-                <input
-                  type="text"
-                  value={editingUser.first_name}
-                  onChange={(e) => setEditingUser(prev => ({ ...prev, first_name: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Last Name
-                </label>
-                <input
-                  type="text"
-                  value={editingUser.last_name}
-                  onChange={(e) => setEditingUser(prev => ({ ...prev, last_name: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">New Role</label>
                 <select
                   value={editingUser.role}
                   onChange={(e) => setEditingUser(prev => ({ ...prev, role: e.target.value }))}
@@ -3476,33 +3587,6 @@ const UserManagement: React.FC<{
                   <option value="admin">Admin - Can approve requests and manage users</option>
                 </select>
               </div>
-
-              <div>
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={editingUser.is_active}
-                    onChange={(e) => setEditingUser(prev => ({ ...prev, is_active: e.target.checked }))}
-                    className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">User is active</span>
-                </label>
-                <p className="text-xs text-gray-500 mt-1">
-                  Inactive users cannot log in or make requests
-                </p>
-              </div>
-
-              {editingUser.active_requests > 0 && !editingUser.is_active && (
-                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <div className="flex items-start">
-                    <AlertTriangle className="w-5 h-5 text-yellow-500 mt-0.5 mr-2 flex-shrink-0" />
-                    <div className="text-sm text-yellow-800">
-                      <strong>Warning:</strong> This user has {editingUser.active_requests} active AWS sessions. 
-                      Deactivating will prevent login but won't revoke existing access until expiration.
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
             <div className="flex items-center justify-end space-x-3 mt-6">
@@ -3516,12 +3600,24 @@ const UserManagement: React.FC<{
                 Cancel
               </button>
               <button
-                onClick={() => handleUserUpdate(editingUser.user_id, {
-                  first_name: editingUser.first_name,
-                  last_name: editingUser.last_name,
-                  role: editingUser.role,
-                  is_active: editingUser.is_active
-                })}
+                onClick={() => {
+                  const originalUser = users.find(u => u.user_id === editingUser.user_id)
+                  
+                  if (editingUser.role !== originalUser?.role) {
+                    // Close the edit modal and open the role change reason modal
+                    setShowEditModal(false)
+                    setRoleChangeModal({
+                      show: true,
+                      user: editingUser,
+                      newRole: editingUser.role,
+                      oldRole: originalUser?.role || ''
+                    })
+                    setRoleChangeReason("")
+                  } else {
+                    setShowEditModal(false)
+                    setEditingUser(null)
+                  }
+                }}
                 disabled={actionLoading === editingUser.user_id}
                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -3532,66 +3628,68 @@ const UserManagement: React.FC<{
         </div>
       )}
 
-      {/* Delete User Modal */}
-      {showDeleteModal && deletingUser && (
+      {/* NEW: Role Change Reason Modal */}
+      {roleChangeModal.show && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
             <div className="flex items-center mb-4">
-              <AlertTriangle className="w-6 h-6 text-red-500 mr-3" />
-              <h3 className="text-lg font-semibold text-gray-900">Delete User</h3>
+              <UserCheck className="w-6 h-6 text-purple-500 mr-3" />
+              <h3 className="text-lg font-semibold text-gray-900">Confirm Role Change</h3>
             </div>
 
-            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+            <div className="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-200">
               <div className="text-sm">
-                <div><strong>Name:</strong> {deletingUser.full_name}</div>
-                <div><strong>Email:</strong> {deletingUser.email}</div>
-                <div><strong>Role:</strong> {deletingUser.role.toUpperCase()}</div>
-                <div><strong>Status:</strong> {deletingUser.is_active ? 'Active' : 'Inactive'}</div>
+                <div><strong>User:</strong> {roleChangeModal.user?.first_name} {roleChangeModal.user?.last_name}</div>
+                <div><strong>Email:</strong> {roleChangeModal.user?.email}</div>
+                <div><strong>Current Role:</strong> {roleChangeModal.oldRole}</div>
+                <div><strong>New Role:</strong> {roleChangeModal.newRole}</div>
               </div>
             </div>
 
-            {deletingUser.active_requests > 0 && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <div className="flex items-start">
-                  <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 mr-2 flex-shrink-0" />
-                  <div className="text-sm text-red-800">
-                    <strong>Warning:</strong> This user has {deletingUser.active_requests} active AWS sessions. 
-                    Deleting will not automatically revoke their current access.
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <div className="text-sm text-yellow-800">
-                <strong>Note:</strong> This will deactivate the user account. Use "Force Delete" to permanently 
-                remove the user from the database.
-              </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Reason for role change: *
+              </label>
+              <textarea
+                value={roleChangeReason}
+                onChange={(e) => setRoleChangeReason(e.target.value)}
+                placeholder="Please provide a clear reason for changing this user's role..."
+                rows={3}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              />
+              <p className="text-xs text-gray-600 mt-1">
+                Minimum 3 characters required. This will be logged for audit purposes.
+              </p>
             </div>
 
             <div className="flex items-center justify-end space-x-3">
               <button
                 onClick={() => {
-                  setShowDeleteModal(false)
-                  setDeletingUser(null)
+                  setRoleChangeModal({ show: false, user: null, newRole: '', oldRole: '' })
+                  setRoleChangeReason("")
+                  // Reopen the edit modal
+                  setShowEditModal(true)
                 }}
                 className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
               >
-                Cancel
+                Back to Edit
               </button>
               <button
-                onClick={() => handleUserDelete(deletingUser.user_id, false)}
-                disabled={actionLoading === deletingUser.user_id}
-                className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors disabled:opacity-50"
+                onClick={handleRoleChangeSubmit}
+                disabled={!roleChangeReason.trim() || roleChangeReason.trim().length < 3 || actionLoading === roleChangeModal.user?.user_id}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center space-x-2"
               >
-                {actionLoading === deletingUser.user_id ? "Processing..." : "Deactivate"}
-              </button>
-              <button
-                onClick={() => handleUserDelete(deletingUser.user_id, true)}
-                disabled={actionLoading === deletingUser.user_id}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-              >
-                {actionLoading === deletingUser.user_id ? "Processing..." : "Force Delete"}
+                {actionLoading === roleChangeModal.user?.user_id ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Changing Role...</span>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck className="w-4 h-4" />
+                    <span>Change Role</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -6604,6 +6702,8 @@ const [requestForm, setRequestForm] = useState<RequestForm>({
           return <UserInvitations addNotification={addNotification} />
         case "aws-accounts":  // ← ADD THIS CASE
           return <AWSAccountsManagement addNotification={addNotification} />
+        case "user-management": // ADD THIS CASE
+          return <UserManagement addNotification={addNotification} /> 
         default:
           return <Dashboard statusData={statusData} authState={authState} connectionStatus={connectionStatus} />
       }
